@@ -41,6 +41,9 @@ spec:
           MYSQL_DATABASE:
             default: ipam
             expose: true
+          MYSQL_CONNECTION_STRING:
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
+            expose: true
           MYSQL_HOST:
             default: ${CONTAINER_HOSTNAME}
             expose: true
@@ -54,6 +57,9 @@ spec:
             default: ${PASSWORD}
           MYSQL_USERNAME:
             default: root
+            expose: true
+          MYSQL_URI:
+            default: ${MYSQL_CONNECTION_STRING}
             expose: true
 
     - name: backend
@@ -77,6 +83,7 @@ spec:
             COPY backend/prisma ./prisma
             COPY backend/nest-cli.json backend/tsconfig.json ./
             COPY backend/src ./src
+            COPY backend/scripts ./scripts
 
             RUN npm run db:generate && npm run build
 
@@ -85,7 +92,7 @@ spec:
 
             EXPOSE 3001
 
-            CMD ["sh", "-c", "for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && node dist/main"]
+            CMD ["sh", "scripts/start-prod.sh"]
           watchPaths:
             - /backend/**
             - /Dockerfile.backend
@@ -98,7 +105,7 @@ spec:
           PORT:
             default: "3001"
           DATABASE_URL:
-            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
+            default: ${MYSQL_CONNECTION_STRING}
           CORS_ORIGINS:
             default: https://${FRONTEND_DOMAIN}
           AUTH_SECRET:

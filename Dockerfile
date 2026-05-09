@@ -24,4 +24,4 @@ ENV CORS_ORIGINS=http://localhost:3003
 
 EXPOSE 3003
 
-CMD ["sh", "-c", "cd /app/backend && for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && PORT=${BACKEND_PORT:-3001} node dist/main & cd /app/frontend && npm run start"]
+CMD ["sh", "-c", "cd /app/backend && sh scripts/start-prod.sh & cd /app/frontend && npm run start"]
