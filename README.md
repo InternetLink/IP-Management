@@ -67,6 +67,7 @@ cp frontend/.env.example frontend/.env.local
 ```env
 DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
 PORT=3001
+CORS_ORIGINS="http://localhost:3003"
 ```
 
 前端环境变量：
@@ -124,6 +125,98 @@ npm run lint
 npx tsc --noEmit
 npm run build
 ```
+
+## 自动部署：Railway / Zeabur
+
+本项目是 monorepo，部署时建议拆成三个服务：
+
+- **Database**：MySQL 服务。
+- **Backend**：根目录选择 `backend`，对外提供 NestJS API。
+- **Frontend**：根目录选择 `frontend`，对外提供 Next.js 页面。
+
+GitHub 仓库连接到 Railway 或 Zeabur 后，每次 push 到默认分支都可以触发自动部署。部署顺序建议先数据库，再后端，最后前端。
+
+### Backend 服务配置
+
+Backend 服务根目录：
+
+```text
+backend
+```
+
+Build Command：
+
+```bash
+npm run db:generate && npm run build
+```
+
+Start Command：
+
+```bash
+npm run start:prod
+```
+
+环境变量：
+
+```env
+DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
+CORS_ORIGINS="https://你的前端域名"
+```
+
+说明：
+
+- `PORT` 通常由 Railway / Zeabur 自动注入，不需要手动固定。
+- `CORS_ORIGINS` 支持多个来源，用英文逗号分隔，例如 `https://app.example.com,https://preview.example.com`。
+- 第一次部署数据库时，需要在 Backend 服务的控制台或一次性任务里执行 `npm run db:push` 同步 Prisma schema。
+- 如果需要示例数据，可以在数据库同步后手动执行 `npm run db:seed`。
+
+### Frontend 服务配置
+
+Frontend 服务根目录：
+
+```text
+frontend
+```
+
+Build Command：
+
+```bash
+npm run build
+```
+
+Start Command：
+
+```bash
+npm run start
+```
+
+环境变量：
+
+```env
+NEXT_PUBLIC_API_URL="https://你的后端域名/api"
+```
+
+说明：
+
+- 前端 `start` 脚本会优先使用平台注入的 `PORT`，本地未设置时默认使用 `3003`。
+- `NEXT_PUBLIC_API_URL` 必须填写后端公开域名，并保留 `/api` 后缀。
+- 后端 `CORS_ORIGINS` 必须包含前端公开域名，否则浏览器会拦截 API 请求。
+
+### Railway 部署要点
+
+1. 在 Railway 创建项目并连接 GitHub 仓库。
+2. 添加 MySQL 数据库服务，复制数据库连接串到 Backend 的 `DATABASE_URL`。
+3. 从同一仓库创建 Backend 服务，Root Directory 设置为 `backend`，填入 Build / Start Command 和环境变量。
+4. 从同一仓库创建 Frontend 服务，Root Directory 设置为 `frontend`，填入 Build / Start Command 和 `NEXT_PUBLIC_API_URL`。
+5. 为 Backend 和 Frontend 分别生成公开域名，然后回填 Frontend 的 API 地址和 Backend 的 `CORS_ORIGINS`。
+
+### Zeabur 部署要点
+
+1. 在 Zeabur 创建项目并连接 GitHub 仓库。
+2. 添加 MySQL 服务，复制数据库连接串到 Backend 的 `DATABASE_URL`。
+3. 从同一仓库部署 Backend，Root Directory 设置为 `backend`，配置 Build / Start Command 和环境变量。
+4. 从同一仓库部署 Frontend，Root Directory 设置为 `frontend`，配置 Build / Start Command 和 `NEXT_PUBLIC_API_URL`。
+5. 绑定或生成 Backend / Frontend 域名后，同步更新 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS`。
 
 ## 主要 API
 
