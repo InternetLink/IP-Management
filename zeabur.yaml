@@ -1,0 +1,130 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: IPAM / Geofeed
+spec:
+  description: Full-stack IP address management system with hierarchical prefixes, IPv4 pools, authentication, and RFC 8805 Geofeed support.
+  icon: https://cdn.zeabur.com/marketplace/mysql.svg
+  readme: |
+    # IPAM / Geofeed
+
+    This template deploys three services:
+
+    - MySQL database
+    - NestJS backend API
+    - Next.js frontend
+
+    After deployment:
+
+    1. Open the frontend domain.
+    2. Create the first administrator account.
+    3. Confirm `NEXT_PUBLIC_API_URL` points to the backend domain with `/api`.
+    4. Confirm backend `CORS_ORIGINS` contains the frontend domain.
+
+    The backend runs `npm run db:push` during build so the Prisma schema is synchronized automatically.
+  services:
+    - name: mysql
+      icon: https://cdn.zeabur.com/marketplace/mysql.svg
+      template: PREBUILT
+      spec:
+        source:
+          image: mysql:8.0
+        ports:
+          - id: database
+            port: 3306
+            type: TCP
+        volumes:
+          - id: data
+            dir: /var/lib/mysql
+        env:
+          MYSQL_DATABASE:
+            default: ipam
+            expose: true
+          MYSQL_HOST:
+            default: ${CONTAINER_HOSTNAME}
+            expose: true
+          MYSQL_PASSWORD:
+            default: ${MYSQL_ROOT_PASSWORD}
+            expose: true
+          MYSQL_PORT:
+            default: ${DATABASE_PORT}
+            expose: true
+          MYSQL_ROOT_PASSWORD:
+            default: ${PASSWORD}
+          MYSQL_USERNAME:
+            default: root
+            expose: true
+
+    - name: backend
+      template: GIT
+      dependencies:
+        - mysql
+      domainKey: BACKEND_DOMAIN
+      spec:
+        source:
+          source: ARBITRARY_GIT
+          gitURL: https://github.com/InternetLink/IP-Management.git
+          branch: main
+          rootDirectory: backend
+          watchPaths:
+            - /backend/**
+        ports:
+          - id: web
+            port: 3001
+            type: HTTP
+        env:
+          PORT:
+            default: "3001"
+          DATABASE_URL:
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
+          CORS_ORIGINS:
+            default: https://${FRONTEND_DOMAIN}
+          AUTH_SECRET:
+            default: ${PASSWORD}
+          AUTH_TOKEN_TTL_DAYS:
+            default: "30"
+
+    - name: frontend
+      template: GIT
+      dependencies:
+        - backend
+      domainKey: FRONTEND_DOMAIN
+      spec:
+        source:
+          source: ARBITRARY_GIT
+          gitURL: https://github.com/InternetLink/IP-Management.git
+          branch: main
+          rootDirectory: frontend
+          watchPaths:
+            - /frontend/**
+        ports:
+          - id: web
+            port: 3003
+            type: HTTP
+        env:
+          PORT:
+            default: "3003"
+          NEXT_PUBLIC_API_URL:
+            default: https://${BACKEND_DOMAIN}/api
+
+localization:
+  zh-CN:
+    description: 支持层级 IP 前缀、IPv4 地址池、登录认证和 RFC 8805 Geofeed 的全栈 IP 地址管理系统。
+    readme: |
+      # IPAM / Geofeed
+
+      该模板会部署三个服务：
+
+      - MySQL 数据库
+      - NestJS 后端 API
+      - Next.js 前端
+
+      部署完成后：
+
+      1. 打开前端域名。
+      2. 创建第一个管理员账号。
+      3. 确认 `NEXT_PUBLIC_API_URL` 指向后端域名并带 `/api` 后缀。
+      4. 确认后端 `CORS_ORIGINS` 包含前端域名。
+
+      后端构建时会执行 `npm run db:push`，自动同步 Prisma schema。

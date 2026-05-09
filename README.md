@@ -160,6 +160,20 @@ npm run build
 
 GitHub 仓库连接到 Railway 或 Zeabur 后，每次 push 到默认分支都可以触发自动部署。部署顺序建议先数据库，再后端，最后前端。
 
+Zeabur 一键部署模板已提供在根目录：
+
+```text
+zeabur.yaml
+```
+
+该模板会创建 MySQL、Backend、Frontend 三个服务。`backend/zbpack.json` 和 `frontend/zbpack.json` 负责对应服务的构建和启动命令。
+
+本地测试 Zeabur 模板：
+
+```bash
+npx zeabur@latest template deploy -f zeabur.yaml
+```
+
 ### Backend 服务配置
 
 Backend 服务根目录：
@@ -241,11 +255,11 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 
 ### Zeabur 部署要点
 
-1. 在 Zeabur 创建项目并连接 GitHub 仓库。
-2. 添加 MySQL 服务，复制数据库连接串到 Backend 的 `DATABASE_URL`。
-3. 从同一仓库部署 Backend，Root Directory 设置为 `backend`，Zeabur 会读取 `backend/zbpack.json`。
-4. 从同一仓库部署 Frontend，Root Directory 设置为 `frontend`，Zeabur 会读取 `frontend/zbpack.json`。
-5. 绑定或生成 Backend / Frontend 域名后，同步更新 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS`。
+1. 推荐直接使用根目录 `zeabur.yaml` 作为一键部署模板。
+2. 模板会创建 `mysql`、`backend`、`frontend` 三个服务。
+3. Backend 使用 `backend/zbpack.json`，构建时执行 `npm run db:push && npm run build`。
+4. Frontend 使用 `frontend/zbpack.json`，构建时执行 `npm run build`。
+5. 绑定或生成 Backend / Frontend 域名后，确认 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS` 与实际域名一致。
 
 ## 主要 API
 
