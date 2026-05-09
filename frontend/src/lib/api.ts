@@ -3,14 +3,43 @@
 // ============================================================================
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const AUTH_TOKEN_KEY = 'ipam-auth-token';
+
+function isBrowser() {
+  return typeof window !== 'undefined';
+}
+
+export function getAuthToken() {
+  if (!isBrowser()) return null;
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string) {
+  if (isBrowser()) localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearAuthToken() {
+  if (isBrowser()) localStorage.removeItem(AUTH_TOKEN_KEY);
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = getAuthToken();
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
     ...options,
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
+    if (res.status === 401) {
+      clearAuthToken();
+      if (isBrowser() && !['/login', '/logout'].includes(window.location.pathname)) {
+        window.location.assign('/login');
+      }
+    }
     throw new Error(error.message || `API Error ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
@@ -18,6 +47,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  auth: {
+    status: () => request<{hasUsers: boolean}>('/auth/status'),
+    bootstrap: (data: {username: string; password: string; email?: string}) =>
+      request<{token: string; expiresAt: number; user: any}>('/auth/bootstrap', { method: 'POST', body: JSON.stringify(data) }),
+    login: (data: {username: string; password: string}) =>
+      request<{token: string; expiresAt: number; user: any}>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+    me: () => request<any>('/auth/me'),
+    changePassword: (data: {currentPassword: string; newPassword: string}) =>
+      request<{ok: boolean}>('/auth/password', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
   dashboard: {
     getStats: () => request<any>('/dashboard'),
   },

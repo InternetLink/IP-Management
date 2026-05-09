@@ -5,6 +5,7 @@ import {Button, Dropdown, Label} from "@heroui/react";
 import {AppLayout, Navbar, Sidebar} from "@heroui-pro/react";
 
 import {useI18n, LOCALE_LABELS, type Locale} from "../i18n";
+import {useAuth} from "../lib/auth";
 import {IconButton} from "./icon-button";
 
 export interface DashboardNavbarProps {
@@ -13,6 +14,7 @@ export interface DashboardNavbarProps {
 
 export function DashboardNavbar({title}: DashboardNavbarProps) {
   const {t, locale, setLocale} = useI18n();
+  const {user} = useAuth();
 
   return (
     <Navbar maxWidth="full">
@@ -28,6 +30,7 @@ export function DashboardNavbar({title}: DashboardNavbarProps) {
           <IconButton label="Notifications" size="sm" variant="tertiary">
             <Bell className="size-4" />
           </IconButton>
+          {user && <span className="text-muted hidden text-xs font-medium sm:inline">{user.username}</span>}
 
           {/* Language Switcher — icons only, no emoji */}
           <Dropdown>

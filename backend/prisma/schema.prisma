@@ -11,6 +11,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ------- User (Local authentication) -------
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique @db.VarChar(50)
+  email        String?   @unique @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  role         String    @default("admin") @db.VarChar(20)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("users")
+}
+
 // ------- Prefix (Hierarchical CIDR Tree) -------
 // Replaces the old IpBlock + Subnet flat models.
 // Any CIDR block — from /8 down to /32 — is a Prefix.

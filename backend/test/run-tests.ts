@@ -1,10 +1,12 @@
 import { cidrTests } from './cidr.test';
+import { authServiceTests } from './auth-service.test';
 import { geofeedServiceTests } from './geofeed-service.test';
 import { prefixesServiceTests } from './prefixes-service.test';
 import type { TestCase } from './test-utils';
 
 const suites: Array<{ name: string; tests: TestCase[] }> = [
   { name: 'CIDR', tests: cidrTests },
+  { name: 'AuthService', tests: authServiceTests },
   { name: 'PrefixesService', tests: prefixesServiceTests },
   { name: 'GeofeedService', tests: geofeedServiceTests },
 ];

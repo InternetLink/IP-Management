@@ -28,6 +28,8 @@ export function SettingsPage() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({currentPassword: "", newPassword: "", confirmPassword: ""});
 
   useEffect(() => {
     api.settings.get().then((data: any) => {
@@ -73,6 +75,35 @@ export function SettingsPage() {
       setSaving(false);
     }
   }, [settings, t]);
+
+  const handleChangePassword = useCallback(async () => {
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+      toast.danger("Current password and new password are required");
+      return;
+    }
+    if (passwordForm.newPassword.length < 8) {
+      toast.danger("New password must be at least 8 characters");
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast.danger("New password confirmation does not match");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await api.auth.changePassword({
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
+      setPasswordForm({currentPassword: "", newPassword: "", confirmPassword: ""});
+      toast.success("Password updated");
+    } catch (err: any) {
+      toast.danger(err.message);
+    } finally {
+      setPasswordSaving(false);
+    }
+  }, [passwordForm]);
 
   if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
 
@@ -127,6 +158,24 @@ export function SettingsPage() {
           <Label className="sr-only">{t.settings.utilThreshold}</Label>
           <Input fullWidth type="number" />
         </TextField>
+      </SettingsRow>
+      <Separator />
+      <SettingsRow label="Account password" description="Change the password for the currently signed-in administrator.">
+        <TextField value={passwordForm.currentPassword} onChange={(v) => setPasswordForm(s => ({...s, currentPassword: v}))}>
+          <Label>Current password</Label>
+          <Input fullWidth autoComplete="current-password" type="password" />
+        </TextField>
+        <TextField value={passwordForm.newPassword} onChange={(v) => setPasswordForm(s => ({...s, newPassword: v}))}>
+          <Label>New password</Label>
+          <Input fullWidth autoComplete="new-password" type="password" />
+        </TextField>
+        <TextField value={passwordForm.confirmPassword} onChange={(v) => setPasswordForm(s => ({...s, confirmPassword: v}))}>
+          <Label>Confirm new password</Label>
+          <Input fullWidth autoComplete="new-password" type="password" />
+        </TextField>
+        <div className="flex justify-end">
+          <Button isDisabled={passwordSaving} type="button" variant="secondary" onPress={handleChangePassword}>Change password</Button>
+        </div>
       </SettingsRow>
       <Separator />
       <footer className="flex items-center justify-end gap-2 pt-2">

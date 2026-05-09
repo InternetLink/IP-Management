@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Query, Header, Res } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { GeofeedService } from './geofeed.service';
 import { CreateGeofeedDto, UpdateGeofeedDto, ImportGeofeedDto } from './geofeed.dto';
+import { Public } from '../auth/public.decorator';
 
 @Controller('geofeed')
 export class GeofeedController {
@@ -12,6 +13,7 @@ export class GeofeedController {
     return this.service.findAll({ search, countryCode });
   }
 
+  @Public()
   @Get('generate')
   async generate(@Res() res: Response, @Query('header') header?: string, @Query('asn') asn?: string) {
     const csv = await this.service.generateCSV(header, asn);

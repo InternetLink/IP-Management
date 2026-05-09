@@ -4,6 +4,7 @@ import type {ReactNode} from "react";
 import {Toast} from "@heroui/react";
 
 import {I18nProvider} from "../i18n";
+import {AuthProvider} from "../lib/auth";
 
 import "./globals.css";
 
@@ -17,7 +18,9 @@ export default function RootLayout({children}: {children: ReactNode}) {
     <html suppressHydrationWarning className="bg-background text-foreground" lang="en">
       <body className="font-sans antialiased">
         <I18nProvider>
-          {children}
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </I18nProvider>
         <Toast.Provider placement="bottom" />
       </body>

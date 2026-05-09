@@ -11,6 +11,7 @@
 - **可视化详情页**：每个前缀详情页展示子前缀地址空间占用、IP Pool 状态分布和地址顺序热力图。
 - **Geofeed**：管理 RFC 8805 CSV 条目，支持导入、导出和公开生成链接。
 - **审计与设置**：记录关键资源变更，并提供组织名称、ASN、联系人、告警阈值等配置。
+- **登录认证**：首次访问创建管理员账号，之后所有管理 API 默认需要登录，侧边栏登出按钮会清理本地会话。
 
 ## 技术架构
 
@@ -22,6 +23,7 @@ ipam/
 │   │   └── seed.ts             # 示例数据
 │   └── src/
 │       ├── prefixes/           # 前缀树、CIDR 拆分、IPv4 Pool、批量 IP 操作
+│       ├── auth/               # 本地管理员账号、密码哈希、Bearer Token 鉴权
 │       ├── geofeed/            # RFC 8805 CRUD、CSV 导入导出
 │       ├── audit/              # 审计日志查询
 │       ├── settings/           # 系统设置
@@ -68,6 +70,8 @@ cp frontend/.env.example frontend/.env.local
 DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
 PORT=3001
 CORS_ORIGINS="http://localhost:3003"
+AUTH_SECRET="change-this-to-a-long-random-secret"
+AUTH_TOKEN_TTL_DAYS=30
 ```
 
 前端环境变量：
@@ -77,6 +81,26 @@ NEXT_PUBLIC_API_URL="http://localhost:3001/api"
 ```
 
 不要提交真实 `.env` 文件、数据库连接串、Token 或密码。
+
+## 首次登录
+
+系统不再是无认证后台。第一次部署或本地初始化数据库后：
+
+1. 打开前端地址。
+2. 如果数据库里还没有用户，登录页会自动进入 **Create first admin** 模式。
+3. 创建第一个管理员账号，系统会自动登录。
+4. 之后再次访问会进入正常登录模式。
+
+认证说明：
+
+- 密码使用 Node.js 内置 `scrypt` 加盐哈希保存，不保存明文密码。
+- 前端使用 `Authorization: Bearer <token>` 访问管理 API。
+- Token 保存在浏览器 `localStorage`，点击侧边栏 `Log out` 会清理本地 Token。
+- 默认登录有效期为 30 天，可通过 `AUTH_TOKEN_TTL_DAYS` 调整；也兼容旧变量 `AUTH_TOKEN_TTL_HOURS`。
+- `AUTH_SECRET` 用于签名 Token，生产环境必须设置为足够长的随机字符串。
+- 公开 Geofeed CSV 下载接口仍可匿名访问，方便对外提供 RFC 8805 文件。
+- 登录后可在 `Settings` 页面修改当前管理员密码。
+- 如果看到 `The table users does not exist in the current database`，说明数据库还没同步，进入 `backend` 执行 `npm run db:push`。
 
 ## 启动后端
 
@@ -147,7 +171,7 @@ backend
 Build Command：
 
 ```bash
-npm run db:generate && npm run build
+npm run db:push && npm run build
 ```
 
 Start Command：
@@ -161,14 +185,17 @@ npm run start:prod
 ```env
 DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
 CORS_ORIGINS="https://你的前端域名"
+AUTH_SECRET="生成一个足够长的随机字符串"
+AUTH_TOKEN_TTL_DAYS=30
 ```
 
 说明：
 
 - `PORT` 通常由 Railway / Zeabur 自动注入，不需要手动固定。
 - `CORS_ORIGINS` 支持多个来源，用英文逗号分隔，例如 `https://app.example.com,https://preview.example.com`。
-- 第一次部署数据库时，需要在 Backend 服务的控制台或一次性任务里执行 `npm run db:push` 同步 Prisma schema。
+- `npm run db:push` 会在自动部署时同步 Prisma schema，避免出现 `users` 等新表不存在的问题。
 - 如果需要示例数据，可以在数据库同步后手动执行 `npm run db:seed`。
+- 部署完成后打开前端，按首次登录流程创建第一个管理员账号。
 
 ### Frontend 服务配置
 
@@ -223,6 +250,11 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 | Method | Endpoint | 说明 |
 |---|---|---|
 | `GET` | `/api/dashboard` | 仪表板统计 |
+| `GET` | `/api/auth/status` | 检查是否已有管理员用户 |
+| `POST` | `/api/auth/bootstrap` | 首次创建管理员，仅在无用户时可用 |
+| `POST` | `/api/auth/login` | 登录并获取 Bearer Token |
+| `GET` | `/api/auth/me` | 获取当前登录用户 |
+| `POST` | `/api/auth/password` | 修改当前登录用户密码 |
 | `GET` | `/api/prefixes` | 获取根前缀列表 |
 | `POST` | `/api/prefixes` | 创建根前缀或子前缀 |
 | `GET` | `/api/prefixes/:id` | 获取前缀详情和直属子前缀 |
@@ -266,6 +298,7 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 - CIDR 解析、规范化、包含关系、重叠检测和 IP 数值排序。
 - 前缀创建、父子校验、同级重叠校验、拆分限制。
 - IPv4 Pool 生成、单个 IP 更新、批量 IP 更新和使用量重算。
+- 管理员首次创建、登录、Token 校验和密码哈希验证。
 - Geofeed CSV 解析、导入结果、字段规范化和导出转义。
 
 当前已验证命令：
