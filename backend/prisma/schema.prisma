@@ -1,0 +1,116 @@
+// ============================================================================
+// Prisma Schema — IPAM Database (Tree Architecture)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ------- Prefix (Hierarchical CIDR Tree) -------
+// Replaces the old IpBlock + Subnet flat models.
+// Any CIDR block — from /8 down to /32 — is a Prefix.
+// parentId creates an arbitrary-depth tree.
+model Prefix {
+  id          String    @id @default(uuid())
+  cidr        String    @unique @db.VarChar(50)
+  version     Int       // 4 or 6
+  parentId    String?   // null = root (RIR allocation)
+  status      String    @default("Active") @db.VarChar(20) // Active, Reserved, Available, Allocated, Deprecated
+  rir         String?   @db.VarChar(10)  // Root nodes: APNIC, ARIN, RIPE, LACNIC, AFRINIC
+  vlan        Int?
+  gateway     String?
+  assignedTo  String?
+  totalIPs    Float     // use Float for IPv6
+  usedIPs     Float     @default(0)
+  isPool      Boolean   @default(false) // When true, individual IPs can be generated/assigned
+  depth       Int       @default(0)
+  description String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  parent      Prefix?   @relation("PrefixTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Prefix[]  @relation("PrefixTree")
+  allocations Allocation[]
+  geofeed     GeofeedEntry[]
+  auditLogs   AuditLog[] @relation("PrefixAudit")
+
+  @@index([parentId])
+  @@map("prefixes")
+}
+
+// ------- Allocation (Individual IP within a Prefix pool) -------
+model Allocation {
+  id           String    @id @default(uuid())
+  prefixId     String
+  ipAddress    String    @db.VarChar(50)
+  assignee     String    @default("") @db.VarChar(100)
+  purpose      String    @default("Server") @db.VarChar(20) // Server, CDN, DNS, Customer, Infrastructure
+  status       String    @default("Available") @db.VarChar(20) // Available, Allocated, Reserved
+  assignedDate DateTime  @default(now())
+  expiryDate   DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  prefix       Prefix    @relation(fields: [prefixId], references: [id], onDelete: Cascade)
+
+  @@unique([prefixId, ipAddress])
+  @@map("allocations")
+}
+
+// ------- Geofeed (RFC 8805) -------
+model GeofeedEntry {
+  id                String   @id @default(uuid())
+  prefix            String   @unique @db.VarChar(50)
+  countryCode       String   @db.VarChar(5)
+  region            String?  @db.VarChar(20)
+  city              String?  @db.VarChar(100)
+  postalCode        String?
+  validation        String   @default("valid") @db.VarChar(10)
+  validationMessage String?  @db.VarChar(255)
+  lastUpdated       DateTime @default(now())
+
+  prefixId          String?
+  prefixRef         Prefix?  @relation(fields: [prefixId], references: [id], onDelete: SetNull)
+
+  @@map("geofeed_entries")
+}
+
+// ------- Audit Log -------
+model AuditLog {
+  id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+  action        String   @db.VarChar(20)
+  resourceType  String   @db.VarChar(20)
+  resourceId    String   @db.VarChar(50)
+  resourceLabel String   @db.VarChar(255)
+  changes       Json?
+  user          String   @default("admin") @db.VarChar(50)
+
+  prefixId      String?
+  prefix        Prefix?  @relation("PrefixAudit", fields: [prefixId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+// ------- App Settings -------
+model AppSettings {
+  id                   String  @id @default("default")
+  organizationName     String  @default("NetOps Inc.")
+  asn                  String  @default("")
+  contactEmail         String  @default("")
+  defaultRIR           String  @default("APNIC")
+  geofeedHeader        String  @default("")
+  geofeedAutoASN       Boolean @default(true)
+  defaultCountryCode   String  @default("TW")
+  geofeedPublicUrl     String?
+  expiryWarningDays    Int     @default(30)
+  utilizationThreshold Int     @default(85)
+
+  @@map("app_settings")
+}

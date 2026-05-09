@@ -1,0 +1,198 @@
+const en = {
+  // Common
+  common: {
+    save: 'Save changes',
+    cancel: 'Cancel',
+    delete: 'Delete',
+    edit: 'Edit',
+    create: 'Create',
+    search: 'Search',
+    filter: 'Filter',
+    export: 'Export',
+    import: 'Import',
+    copy: 'Copy',
+    copied: 'Copied!',
+    actions: 'Actions',
+    status: 'Status',
+    description: 'Description',
+    noData: 'No data',
+    loading: 'Loading...',
+    confirm: 'Confirm',
+    reset: 'Reset',
+    all: 'All',
+    view: 'View details',
+    select: 'Select',
+    confirmDelete: 'Confirm Delete',
+  },
+
+  // Navigation
+  nav: {
+    dashboard: 'Dashboard',
+    prefixes: 'IP Prefixes',
+    geofeed: 'Geofeed',
+    tools: 'Tools',
+    auditLog: 'Audit Log',
+    settings: 'Settings',
+    help: 'Help & Information',
+    logout: 'Log out',
+  },
+
+  // Dashboard
+  dashboard: {
+    title: 'IP Address Management',
+    totalIPv4: 'Total IPv4 Space',
+    ipv6Prefixes: 'IPv6 Prefixes',
+    utilization: 'IPv4 Utilization',
+    geofeedEntries: 'Geofeed Entries',
+    allocationTrend: 'Activity Trend',
+    rirDistribution: 'IP Space by RIR',
+    rirDescription: 'Distribution across Regional Internet Registries',
+    totalIPs: 'Total IPs',
+    recentActivity: 'Recent Activity',
+    prefixes: 'Prefixes',
+    geofeedCoverage: 'Geofeed Coverage',
+    active: 'Active',
+    reserved: 'Reserved',
+    allocated: 'Allocated',
+    available: 'Available',
+    valid: 'Valid',
+    warnings: 'Warnings',
+    healthy: 'Healthy',
+    high: 'High',
+  },
+
+  // Prefixes (Tree IPAM)
+  prefixes: {
+    subtitle: 'Manage IP address space in a hierarchical CIDR tree.',
+    addRoot: 'Add Root Prefix',
+    addChild: 'Add Child Prefix',
+    tree: 'CIDR Tree',
+    rootPrefixes: 'root prefixes',
+    emptyState: 'No prefixes yet',
+    emptyStateHint: 'Add a root prefix from your RIR allocation to get started.',
+    split: 'Split',
+    splitDesc: 'Split this prefix into smaller sub-prefixes.',
+    newPrefixLength: 'New prefix length',
+    childrenCreated: 'children created',
+    assignedTo: 'Assigned To',
+    childPrefixes: 'Child Prefixes',
+    emptyPrefixState: 'This prefix has no children or IP allocations yet',
+    emptyPrefixHint: 'Split into sub-prefixes or generate individual IP addresses.',
+    deleteWarning: 'This will permanently delete this prefix and all its children:',
+    ipManagement: 'IP Address Management',
+    ipAddress: 'IP Address',
+    assignee: 'Assignee',
+    purpose: 'Purpose',
+    notes: 'Notes',
+    generateIPs: 'Generate IPs',
+    back: 'Back',
+    refresh: 'Refresh',
+    filterAll: 'All',
+    filterAvailable: 'Available',
+    filterAllocated: 'Allocated',
+    filterReserved: 'Reserved',
+    noIPs: 'No IP addresses yet',
+    noIPsHint: 'Click "Generate IPs" to populate this prefix with individual IP addresses.',
+  },
+
+  // Geofeed
+  geofeed: {
+    subtitle: 'Manage RFC 8805 geofeed entries for IP geolocation accuracy.',
+    addEntry: 'Add Entry',
+    importCSV: 'Import CSV',
+    prefix: 'Prefix',
+    country: 'Country',
+    region: 'Region',
+    city: 'City',
+    postalCode: 'Postal',
+    validation: 'Status',
+    lastUpdated: 'Updated',
+    preview: 'Geofeed Preview',
+    entries: 'entries',
+    countries: 'countries',
+    generateGeofeed: 'Generate Geofeed',
+    publicLink: 'Public Geofeed URL',
+    publicLinkDesc: 'Share this URL in WHOIS inetnum remarks or serve it at /.well-known/geofeed.',
+  },
+
+  // Tools
+  tools: {
+    subtitle: 'Network tools and CIDR calculators.',
+    cidrCalculator: 'CIDR Calculator',
+    cidrCalcDesc: 'Enter a CIDR notation to calculate subnet details.',
+    subnetSplitter: 'Subnet Splitter',
+    splitDesc: 'Split a CIDR into smaller subnets.',
+    ipLookup: 'IP Lookup',
+    lookupDesc: 'Search for an IP address in your managed space.',
+    cidrNotation: 'CIDR Notation',
+    sourceCIDR: 'Source CIDR',
+    newPrefix: 'New Prefix Length',
+    subnetsResult: '{count} subnets:',
+    network: 'Network',
+    broadcast: 'Broadcast',
+    subnetMask: 'Subnet Mask',
+    wildcardMask: 'Wildcard Mask',
+    firstUsable: 'First Usable',
+    lastUsable: 'Last Usable',
+    totalHosts: 'Total Hosts',
+    usableHosts: 'Usable Hosts',
+    ipClass: 'IP Class',
+    enterIP: 'Enter an IP address to search your managed prefixes and allocations.',
+  },
+
+  // Audit
+  audit: {
+    subtitle: 'Track all changes to your IP resources.',
+    timestamp: 'Timestamp',
+    action: 'Action',
+    resourceType: 'Resource Type',
+    resource: 'Resource',
+    changes: 'Changes',
+    user: 'User',
+    allActions: 'All Actions',
+    details: 'Details',
+  },
+
+  // Settings
+  settings: {
+    subtitle: 'Configure your IPAM and Geofeed settings.',
+    orgName: 'Organization Name',
+    orgNameDesc: 'Your organization name for geofeed headers.',
+    asn: 'ASN',
+    asnDesc: 'Your Autonomous System Number.',
+    contactEmail: 'Contact Email',
+    contactEmailDesc: 'NOC contact email.',
+    geofeedHeader: 'Geofeed Header',
+    geofeedHeaderDesc: 'Custom header comment for geofeed output.',
+    includeASN: 'Include ASN in geofeed header',
+    expiryWarning: 'Expiry Warning',
+    expiryWarningDesc: 'Days before allocation expiry to show warnings.',
+    utilThreshold: 'Utilization Threshold',
+    utilThresholdDesc: 'Percentage at which to show utilization warnings.',
+  },
+
+  // Help
+  help: {
+    subtitle: 'Find answers about IPAM and Geofeed management.',
+    documentation: 'Documentation',
+    documentationDesc: 'Learn about CIDR notation, subnet management, and geofeed RFC 8805.',
+    community: 'Community',
+    communityDesc: 'Join the community to discuss IP management best practices.',
+    support: 'Contact Support',
+    supportDesc: 'Get help from our support team for complex networking questions.',
+    faq: 'Frequently Asked Questions',
+  },
+
+  // Sidebar
+  sidebar: {
+    appName: 'IPAM Console',
+    appDesc: 'Geofeed Manager',
+  },
+} as const;
+
+export default en;
+type WidenTranslationStrings<T> = {
+  readonly [K in keyof T]: T[K] extends string ? string : WidenTranslationStrings<T[K]>;
+};
+
+export type TranslationKeys = WidenTranslationStrings<typeof en>;

@@ -1,0 +1,25 @@
+# dependencies
+**/node_modules/
+
+# generated output
+**/dist/
+**/.next/
+**/out/
+**/build/
+**/.turbo/
+**/*.tsbuildinfo
+
+# local environment
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+
+# logs and system files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+
