@@ -66,9 +66,9 @@ spec:
           source: ARBITRARY_GIT
           gitURL: https://github.com/InternetLink/IP-Management.git
           branch: main
-          rootDirectory: backend
           watchPaths:
             - /backend/**
+            - /zbpack.backend.json
         ports:
           - id: web
             port: 3001
@@ -95,9 +95,9 @@ spec:
           source: ARBITRARY_GIT
           gitURL: https://github.com/InternetLink/IP-Management.git
           branch: main
-          rootDirectory: frontend
           watchPaths:
             - /frontend/**
+            - /zbpack.frontend.json
         ports:
           - id: web
             port: 3003

@@ -166,7 +166,7 @@ Zeabur 一键部署模板已提供在根目录：
 zeabur.yaml
 ```
 
-该模板会创建 MySQL、Backend、Frontend 三个服务。`backend/zbpack.json` 和 `frontend/zbpack.json` 负责对应服务的构建和启动命令。
+该模板会创建 MySQL、Backend、Frontend 三个服务。根目录 `zbpack.backend.json` 和 `zbpack.frontend.json` 按 Zeabur 官方服务名规则指定对应服务的应用目录、构建命令和启动命令。
 
 本地测试 Zeabur 模板：
 
@@ -207,7 +207,7 @@ AUTH_TOKEN_TTL_DAYS=30
 
 - `PORT` 通常由 Railway / Zeabur 自动注入，不需要手动固定。
 - `CORS_ORIGINS` 支持多个来源，用英文逗号分隔，例如 `https://app.example.com,https://preview.example.com`。
-- `backend/zbpack.json` 已写入 Zeabur 的 Backend 构建和启动命令。
+- `zbpack.backend.json` 已写入 Zeabur 的 Backend 应用目录、构建命令和启动命令。
 - `npm run db:push` 会在自动部署时同步 Prisma schema，避免出现 `users` 等新表不存在的问题。
 - 如果需要示例数据，可以在数据库同步后手动执行 `npm run db:seed`。
 - 部署完成后打开前端，按首次登录流程创建第一个管理员账号。
@@ -243,7 +243,7 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 - 前端 `start` 脚本会优先使用平台注入的 `PORT`，本地未设置时默认使用 `3003`。
 - `NEXT_PUBLIC_API_URL` 必须填写后端公开域名，并保留 `/api` 后缀。
 - 后端 `CORS_ORIGINS` 必须包含前端公开域名，否则浏览器会拦截 API 请求。
-- `frontend/zbpack.json` 已写入 Zeabur 的 Frontend 构建和启动命令。
+- `zbpack.frontend.json` 已写入 Zeabur 的 Frontend 应用目录、构建命令和启动命令。
 
 ### Railway 部署要点
 
@@ -257,8 +257,8 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 
 1. 推荐直接使用根目录 `zeabur.yaml` 作为一键部署模板。
 2. 模板会创建 `mysql`、`backend`、`frontend` 三个服务。
-3. Backend 使用 `backend/zbpack.json`，构建时执行 `npm run db:push && npm run build`。
-4. Frontend 使用 `frontend/zbpack.json`，构建时执行 `npm run build`。
+3. Backend 使用根目录 `zbpack.backend.json`，`app_dir` 指向 `backend`，构建时执行 `npm run db:push && npm run build`。
+4. Frontend 使用根目录 `zbpack.frontend.json`，`app_dir` 指向 `frontend`，构建时执行 `npm run build`。
 5. 绑定或生成 Backend / Frontend 域名后，确认 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS` 与实际域名一致。
 
 ## 主要 API
