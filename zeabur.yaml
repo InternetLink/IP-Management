@@ -66,9 +66,30 @@ spec:
           source: ARBITRARY_GIT
           gitURL: https://github.com/InternetLink/IP-Management.git
           branch: main
+          dockerfile: |
+            FROM node:20-alpine
+
+            WORKDIR /app
+
+            COPY backend/package*.json ./
+            RUN npm ci
+
+            COPY backend/prisma ./prisma
+            COPY backend/nest-cli.json backend/tsconfig.json ./
+            COPY backend/src ./src
+
+            RUN npm run db:generate && npm run build
+
+            ENV NODE_ENV=production
+            ENV PORT=3001
+
+            EXPOSE 3001
+
+            CMD ["sh", "-c", "for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && node dist/main"]
           watchPaths:
             - /backend/**
             - /zbpack.backend.json
+            - /Dockerfile.backend
         ports:
           - id: web
             port: 3001
@@ -95,9 +116,32 @@ spec:
           source: ARBITRARY_GIT
           gitURL: https://github.com/InternetLink/IP-Management.git
           branch: main
+          dockerfile: |
+            FROM node:20-alpine
+
+            WORKDIR /app
+
+            ARG NEXT_PUBLIC_API_URL
+            ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+            COPY frontend/package*.json ./
+            RUN npm ci
+
+            COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
+            COPY frontend/src ./src
+
+            RUN npm run build
+
+            ENV NODE_ENV=production
+            ENV PORT=3003
+
+            EXPOSE 3003
+
+            CMD ["npm", "run", "start"]
           watchPaths:
             - /frontend/**
             - /zbpack.frontend.json
+            - /Dockerfile.frontend
         ports:
           - id: web
             port: 3003

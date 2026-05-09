@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY backend/package*.json ./
+RUN npm ci
+
+COPY backend/prisma ./prisma
+COPY backend/nest-cli.json backend/tsconfig.json ./
+COPY backend/src ./src
+
+RUN npm run db:generate && npm run build
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+EXPOSE 3001
+
+CMD ["sh", "-c", "for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && node dist/main"]

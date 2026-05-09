@@ -1,0 +1,21 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
+COPY frontend/src ./src
+
+RUN npm run build
+
+ENV NODE_ENV=production
+ENV PORT=3003
+
+EXPOSE 3003
+
+CMD ["npm", "run", "start"]
