@@ -1,0 +1,4 @@
+{
+  "build_command": "npm run db:push && npm run build",
+  "start_command": "npm run start:prod"
+}

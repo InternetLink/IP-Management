@@ -193,6 +193,7 @@ AUTH_TOKEN_TTL_DAYS=30
 
 - `PORT` 通常由 Railway / Zeabur 自动注入，不需要手动固定。
 - `CORS_ORIGINS` 支持多个来源，用英文逗号分隔，例如 `https://app.example.com,https://preview.example.com`。
+- `backend/zbpack.json` 已写入 Zeabur 的 Backend 构建和启动命令。
 - `npm run db:push` 会在自动部署时同步 Prisma schema，避免出现 `users` 等新表不存在的问题。
 - 如果需要示例数据，可以在数据库同步后手动执行 `npm run db:seed`。
 - 部署完成后打开前端，按首次登录流程创建第一个管理员账号。
@@ -228,6 +229,7 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 - 前端 `start` 脚本会优先使用平台注入的 `PORT`，本地未设置时默认使用 `3003`。
 - `NEXT_PUBLIC_API_URL` 必须填写后端公开域名，并保留 `/api` 后缀。
 - 后端 `CORS_ORIGINS` 必须包含前端公开域名，否则浏览器会拦截 API 请求。
+- `frontend/zbpack.json` 已写入 Zeabur 的 Frontend 构建和启动命令。
 
 ### Railway 部署要点
 
@@ -241,8 +243,8 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 
 1. 在 Zeabur 创建项目并连接 GitHub 仓库。
 2. 添加 MySQL 服务，复制数据库连接串到 Backend 的 `DATABASE_URL`。
-3. 从同一仓库部署 Backend，Root Directory 设置为 `backend`，配置 Build / Start Command 和环境变量。
-4. 从同一仓库部署 Frontend，Root Directory 设置为 `frontend`，配置 Build / Start Command 和 `NEXT_PUBLIC_API_URL`。
+3. 从同一仓库部署 Backend，Root Directory 设置为 `backend`，Zeabur 会读取 `backend/zbpack.json`。
+4. 从同一仓库部署 Frontend，Root Directory 设置为 `frontend`，Zeabur 会读取 `frontend/zbpack.json`。
 5. 绑定或生成 Backend / Frontend 域名后，同步更新 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS`。
 
 ## 主要 API
