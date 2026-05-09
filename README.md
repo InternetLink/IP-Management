@@ -152,13 +152,12 @@ npm run build
 
 ## 自动部署：Railway / Zeabur
 
-本项目是 monorepo，部署时建议拆成三个服务：
+本项目是 monorepo。为了避免 Zeabur 从仓库根目录误判为 Static，推荐使用根目录 Dockerfile 的单应用部署：
 
 - **Database**：MySQL 服务。
-- **Backend**：根目录选择 `backend`，对外提供 NestJS API。
-- **Frontend**：根目录选择 `frontend`，对外提供 Next.js 页面。
+- **App**：根目录 `Dockerfile`，同一个容器内运行 Next.js 前端和 NestJS 后端。
 
-GitHub 仓库连接到 Railway 或 Zeabur 后，每次 push 到默认分支都可以触发自动部署。部署顺序建议先数据库，再后端，最后前端。
+GitHub 仓库连接到 Railway 或 Zeabur 后，每次 push 到默认分支都可以触发自动部署。部署顺序建议先数据库，再应用服务。
 
 Zeabur 一键部署模板已提供在根目录：
 
@@ -166,7 +165,7 @@ Zeabur 一键部署模板已提供在根目录：
 zeabur.yaml
 ```
 
-该模板会创建 MySQL、Backend、Frontend 三个服务。根目录 `Dockerfile.backend` 和 `Dockerfile.frontend` 明确指定 Docker 部署流程，避免 Zeabur 把 monorepo 根目录误判为 Static。
+该模板会创建 MySQL 和 App 两个服务。根目录 `Dockerfile` 会明确指定 Docker 部署流程，避免 Zeabur 把 monorepo 根目录误判为 Static。
 
 本地测试 Zeabur 模板：
 
@@ -174,44 +173,46 @@ zeabur.yaml
 npx zeabur@latest template deploy -f zeabur.yaml
 ```
 
-### Backend 服务配置
+### App 服务配置
 
-Backend 服务根目录：
+App 服务根目录：
 
 ```text
-backend
+.
 ```
 
-Build Command：
+Dockerfile：
 
-```bash
-npm run db:push && npm run build
-```
-
-Start Command：
-
-```bash
-npm run start:prod
+```text
+Dockerfile
 ```
 
 环境变量：
 
 ```env
 DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
-CORS_ORIGINS="https://你的前端域名"
+NEXT_PUBLIC_API_URL="/api"
 AUTH_SECRET="生成一个足够长的随机字符串"
 AUTH_TOKEN_TTL_DAYS=30
 ```
 
 说明：
 
-- `PORT` 通常由 Railway / Zeabur 自动注入，不需要手动固定。
-- `CORS_ORIGINS` 支持多个来源，用英文逗号分隔，例如 `https://app.example.com,https://preview.example.com`。
-- `Dockerfile.backend` 已写入 Zeabur 的 Backend Docker 部署流程。
-- `zbpack.backend.json` 仍保留服务名 Dockerfile 指定，作为手动 Git 服务部署时的兜底配置。
-- `npm run db:push` 会在自动部署时同步 Prisma schema，避免出现 `users` 等新表不存在的问题。
-- 如果需要示例数据，可以在数据库同步后手动执行 `npm run db:seed`。
-- 部署完成后打开前端，按首次登录流程创建第一个管理员账号。
+- `PORT` 通常由 Zeabur 自动注入，本项目 Dockerfile 默认公开 `3003`。
+- Next.js 会把浏览器的 `/api/*` 请求代理到容器内部的 NestJS 后端 `127.0.0.1:3001`。
+- 容器启动时会先执行 `npm run db:push` 同步 Prisma schema，避免出现 `users` 等新表不存在的问题。
+- 部署完成后打开应用域名，按首次登录流程创建第一个管理员账号。
+
+### 拆分服务配置
+
+如果你坚持拆成 Backend / Frontend 两个 Zeabur 服务，也保留了以下文件：
+
+- `Dockerfile.backend`
+- `Dockerfile.frontend`
+- `zbpack.backend.json`
+- `zbpack.frontend.json`
+
+但 Zeabur UI 对 monorepo 探测不稳定时，优先使用根目录 `Dockerfile` 的单应用模式。
 
 ### Frontend 服务配置
 
@@ -249,19 +250,35 @@ NEXT_PUBLIC_API_URL="https://你的后端域名/api"
 
 ### Railway 部署要点
 
+Railway 也不要走自动语言探测。本仓库已提供根目录 `Dockerfile` 和 `railway.json`：
+
+- `Dockerfile`：同一个容器内运行 Next.js 前端和 NestJS 后端。
+- `railway.json`：强制 Railway 使用 Dockerfile builder。
+
+部署步骤：
+
 1. 在 Railway 创建项目并连接 GitHub 仓库。
-2. 添加 MySQL 数据库服务，复制数据库连接串到 Backend 的 `DATABASE_URL`。
-3. 从同一仓库创建 Backend 服务，Root Directory 设置为 `backend`，填入 Build / Start Command 和环境变量。
-4. 从同一仓库创建 Frontend 服务，Root Directory 设置为 `frontend`，填入 Build / Start Command 和 `NEXT_PUBLIC_API_URL`。
-5. 为 Backend 和 Frontend 分别生成公开域名，然后回填 Frontend 的 API 地址和 Backend 的 `CORS_ORIGINS`。
+2. 添加 MySQL 数据库服务。
+3. 创建 App 服务，源码选择本仓库根目录，不要设置 Root Directory。
+4. Railway 会读取根目录 `railway.json`，并使用根目录 `Dockerfile` 构建。
+5. App 服务环境变量至少设置：
+
+```env
+DATABASE_URL="你的 Railway MySQL 连接串"
+NEXT_PUBLIC_API_URL="/api"
+AUTH_SECRET="生成一个足够长的随机字符串"
+AUTH_TOKEN_TTL_DAYS=30
+```
+
+Railway 会注入 `PORT`，前端会监听该端口；后端在容器内部使用 `BACKEND_PORT=3001`。
 
 ### Zeabur 部署要点
 
 1. 推荐直接使用根目录 `zeabur.yaml` 作为一键部署模板。
-2. 模板会创建 `mysql`、`backend`、`frontend` 三个服务。
-3. Backend 使用 `Dockerfile.backend`，启动时执行 `npm run db:push` 后运行 NestJS。
-4. Frontend 使用 `Dockerfile.frontend`，构建并运行 Next.js。
-5. 绑定或生成 Backend / Frontend 域名后，确认 `NEXT_PUBLIC_API_URL` 和 `CORS_ORIGINS` 与实际域名一致。
+2. 模板会创建 `mysql`、`app` 两个服务。
+3. `app` 服务使用根目录 `Dockerfile`，不会再走 Static 自动探测。
+4. 如果手动在 Zeabur UI 部署 GitHub 仓库，请选择 Dockerfile 部署，并使用根目录 `Dockerfile`。
+5. 部署完成后打开 App 域名创建第一个管理员账号。
 
 ## 主要 API
 

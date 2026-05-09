@@ -9,20 +9,25 @@ spec:
   readme: |
     # IPAM / Geofeed
 
-    This template deploys three services:
+    This template deploys two services:
 
     - MySQL database
-    - NestJS backend API
-    - Next.js frontend
+    - IPAM web app, built from the root Dockerfile
+
+    The app container runs both:
+
+    - NestJS backend on internal port 3001
+    - Next.js frontend on public port 3003
+
+    Browser API requests use `/api` and are proxied by Next.js to the internal backend.
 
     After deployment:
 
-    1. Open the frontend domain.
+    1. Open the app domain.
     2. Create the first administrator account.
-    3. Confirm `NEXT_PUBLIC_API_URL` points to the backend domain with `/api`.
-    4. Confirm backend `CORS_ORIGINS` contains the frontend domain.
+    3. If you deploy manually, make sure `DATABASE_URL` points to MySQL.
 
-    The backend runs `npm run db:push` during build so the Prisma schema is synchronized automatically.
+    The app runs `npm run db:push` before starting the backend so the Prisma schema is synchronized automatically.
   services:
     - name: mysql
       icon: https://cdn.zeabur.com/marketplace/mysql.svg
@@ -56,11 +61,11 @@ spec:
             default: root
             expose: true
 
-    - name: backend
+    - name: app
       template: GIT
       dependencies:
         - mysql
-      domainKey: BACKEND_DOMAIN
+      domainKey: APP_DOMAIN
       spec:
         source:
           source: ARBITRARY_GIT
@@ -71,77 +76,34 @@ spec:
 
             WORKDIR /app
 
-            COPY backend/package*.json ./
-            RUN npm ci
+            COPY backend/package*.json ./backend/
+            RUN cd backend && npm ci
 
-            COPY backend/prisma ./prisma
-            COPY backend/nest-cli.json backend/tsconfig.json ./
-            COPY backend/src ./src
+            COPY frontend/package*.json ./frontend/
+            RUN cd frontend && npm ci
 
-            RUN npm run db:generate && npm run build
+            COPY backend ./backend
+            COPY frontend ./frontend
 
-            ENV NODE_ENV=production
-            ENV PORT=3001
-
-            EXPOSE 3001
-
-            CMD ["sh", "-c", "for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && node dist/main"]
-          watchPaths:
-            - /backend/**
-            - /zbpack.backend.json
-            - /Dockerfile.backend
-        ports:
-          - id: web
-            port: 3001
-            type: HTTP
-        env:
-          PORT:
-            default: "3001"
-          DATABASE_URL:
-            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
-          CORS_ORIGINS:
-            default: https://${FRONTEND_DOMAIN}
-          AUTH_SECRET:
-            default: ${PASSWORD}
-          AUTH_TOKEN_TTL_DAYS:
-            default: "30"
-
-    - name: frontend
-      template: GIT
-      dependencies:
-        - backend
-      domainKey: FRONTEND_DOMAIN
-      spec:
-        source:
-          source: ARBITRARY_GIT
-          gitURL: https://github.com/InternetLink/IP-Management.git
-          branch: main
-          dockerfile: |
-            FROM node:20-alpine
-
-            WORKDIR /app
-
-            ARG NEXT_PUBLIC_API_URL
+            ARG NEXT_PUBLIC_API_URL=/api
             ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-            COPY frontend/package*.json ./
-            RUN npm ci
-
-            COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
-            COPY frontend/src ./src
-
-            RUN npm run build
+            RUN cd backend && npm run db:generate && npm run build
+            RUN cd frontend && npm run build
 
             ENV NODE_ENV=production
             ENV PORT=3003
+            ENV BACKEND_PORT=3001
+            ENV CORS_ORIGINS=http://localhost:3003
 
             EXPOSE 3003
 
-            CMD ["npm", "run", "start"]
+            CMD ["sh", "-c", "cd /app/backend && for i in $(seq 1 30); do npm run db:push && break; echo 'Waiting for database...'; sleep 2; done && PORT=${BACKEND_PORT:-3001} node dist/main & cd /app/frontend && npm run start"]
           watchPaths:
+            - /backend/**
             - /frontend/**
-            - /zbpack.frontend.json
-            - /Dockerfile.frontend
+            - /Dockerfile
+            - /zeabur.yaml
         ports:
           - id: web
             port: 3003
@@ -149,8 +111,18 @@ spec:
         env:
           PORT:
             default: "3003"
+          BACKEND_PORT:
+            default: "3001"
           NEXT_PUBLIC_API_URL:
-            default: https://${BACKEND_DOMAIN}/api
+            default: /api
+          DATABASE_URL:
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
+          CORS_ORIGINS:
+            default: https://${APP_DOMAIN}
+          AUTH_SECRET:
+            default: ${PASSWORD}
+          AUTH_TOKEN_TTL_DAYS:
+            default: "30"
 
 localization:
   zh-CN:
@@ -158,17 +130,22 @@ localization:
     readme: |
       # IPAM / Geofeed
 
-      该模板会部署三个服务：
+      该模板会部署两个服务：
 
       - MySQL 数据库
-      - NestJS 后端 API
-      - Next.js 前端
+      - IPAM Web 应用，使用根目录 Dockerfile 构建
+
+      应用容器内部同时运行：
+
+      - NestJS 后端，内部端口 3001
+      - Next.js 前端，公开端口 3003
+
+      浏览器通过 `/api` 访问接口，由 Next.js 代理到内部后端。
 
       部署完成后：
 
-      1. 打开前端域名。
+      1. 打开应用域名。
       2. 创建第一个管理员账号。
-      3. 确认 `NEXT_PUBLIC_API_URL` 指向后端域名并带 `/api` 后缀。
-      4. 确认后端 `CORS_ORIGINS` 包含前端域名。
+      3. 如果手动部署，确认 `DATABASE_URL` 指向 MySQL。
 
-      后端构建时会执行 `npm run db:push`，自动同步 Prisma schema。
+      应用启动前会执行 `npm run db:push`，自动同步 Prisma schema。
