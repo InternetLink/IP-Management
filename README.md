@@ -1,5 +1,7 @@
 # IPAM / Geofeed 管理系统
 
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/TK5VW2)
+
 这是一个全栈 IP 地址管理系统，支持层级化 CIDR 前缀管理、IPv4 地址池操作、RFC 8805 Geofeed 管理、审计日志和基础系统设置。
 
 ## 核心能力
@@ -158,6 +160,12 @@ npm run build
 - **Database**：MySQL 服务。
 - **Backend**：从仓库根目录使用 `Dockerfile.backend` 构建 NestJS API。
 - **Frontend**：从仓库根目录使用 `Dockerfile.frontend` 构建 Next.js 页面。
+
+一键部署入口：
+
+```text
+https://zeabur.com/templates/TK5VW2
+```
 
 GitHub 仓库连接到 Railway 后，每次 push 到默认分支可以触发自动部署。Zeabur 如果要自动创建三服务，需要先通过 `zeabur.yaml` 部署或发布模板；普通 Git 导入不会自动创建 MySQL、Backend、Frontend 三个服务。
 
