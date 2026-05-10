@@ -122,8 +122,8 @@ spec:
       domainKey: BACKEND_DOMAIN
       spec:
         source:
-          source: ARBITRARY_GIT
-          gitURL: https://github.com/InternetLink/IP-Management.git
+          source: GITHUB
+          repo: 1234126366
           branch: main
           dockerfile: |
             FROM node:20-bookworm-slim
@@ -177,8 +177,8 @@ spec:
       domainKey: FRONTEND_DOMAIN
       spec:
         source:
-          source: ARBITRARY_GIT
-          gitURL: https://github.com/InternetLink/IP-Management.git
+          source: GITHUB
+          repo: 1234126366
           branch: main
           dockerfile: |
             FROM node:20-bookworm-slim
