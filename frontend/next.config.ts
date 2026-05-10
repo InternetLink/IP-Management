@@ -4,14 +4,6 @@ const nextConfig: NextConfig = {
   devIndicators: {
     position: "bottom-right",
   },
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: "http://127.0.0.1:3001/api/:path*",
-      },
-    ];
-  },
   images: {
     remotePatterns: [
       {

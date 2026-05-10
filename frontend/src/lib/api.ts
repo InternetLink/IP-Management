@@ -2,7 +2,7 @@
 // API Client — Connects frontend to NestJS backend
 // ============================================================================
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || '/api').replace(/\/$/, '');
 const AUTH_TOKEN_KEY = 'ipam-auth-token';
 
 function isBrowser() {

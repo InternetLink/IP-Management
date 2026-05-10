@@ -4,30 +4,49 @@ kind: Template
 metadata:
   name: IPAM / Geofeed
 spec:
-  description: Full-stack IP address management system with separate NestJS backend, Next.js frontend, MySQL, authentication, and RFC 8805 Geofeed support.
+  description: Full-stack IP address management system with separate MySQL, NestJS backend, and Next.js frontend services.
   icon: https://cdn.zeabur.com/marketplace/mysql.svg
+  variables:
+    - key: FRONTEND_DOMAIN
+      type: DOMAIN
+      name: Frontend domain
+      description: Public domain for the IPAM web UI.
+    - key: BACKEND_DOMAIN
+      type: DOMAIN
+      name: Backend API domain
+      description: Public domain for the NestJS API service.
+    - key: HEROUI_AUTH_TOKEN
+      type: PASSWORD
+      name: HeroUI Pro CI/CD token
+      description: Required by @heroui-pro/react during frontend dependency installation.
   readme: |
     # IPAM / Geofeed
 
-    This template deploys three services without requiring manual root-directory selection:
+    This template deploys three separate services automatically:
 
-    - MySQL database
-    - NestJS backend API, built from the repository root with `Dockerfile.backend`
-    - Next.js frontend, built from the repository root with `Dockerfile.frontend`
+    - `mysql`: MySQL 8.0 with persistent storage.
+    - `backend`: NestJS API built from this repository root with an inline Dockerfile.
+    - `frontend`: Next.js UI built from this repository root with an inline Dockerfile.
 
-    After deployment:
+    You do not need to choose `backend/` or `frontend/` as a root directory. Deploy this YAML as a Zeabur template instead of importing the repository as a normal single Git service.
 
-    1. Open the frontend domain.
-    2. Create the first administrator account.
-    3. Confirm `NEXT_PUBLIC_API_URL` points to the backend domain with `/api`.
-    4. Confirm backend `CORS_ORIGINS` contains the frontend domain.
+    ## Required input
 
-    The backend runs `npm run db:push` before starting so the Prisma schema is synchronized automatically.
+    - Generate a Zeabur domain for `FRONTEND_DOMAIN`.
+    - Generate a Zeabur domain for `BACKEND_DOMAIN`.
+    - Fill `HEROUI_AUTH_TOKEN` with your HeroUI Pro CI/CD token.
+
+    ## Runtime behavior
+
+    - The backend receives `DATABASE_URL` from the MySQL service and runs `npm run db:push` before starting.
+    - The frontend calls `/api` by default and proxies requests to the backend service through `API_PROXY_TARGET`.
+    - The first browser visit asks you to create the first administrator account.
   services:
     - name: mysql
       icon: https://cdn.zeabur.com/marketplace/mysql.svg
       template: PREBUILT
       spec:
+        id: mysql
         source:
           image: mysql:8.0
         ports:
@@ -37,12 +56,22 @@ spec:
         volumes:
           - id: data
             dir: /var/lib/mysql
+        instructions:
+          - title: Command to connect to your MySQL
+            content: mysqlsh --sql --host=${PORT_FORWARDED_HOSTNAME} --port=${DATABASE_PORT_FORWARDED_PORT} --user=${MYSQL_USERNAME} --password=${MYSQL_PASSWORD} --schema=${MYSQL_DATABASE}
+          - title: MySQL username
+            content: ${MYSQL_USERNAME}
+          - title: MySQL password
+            content: ${MYSQL_PASSWORD}
+          - title: MySQL database
+            content: ${MYSQL_DATABASE}
+          - title: MySQL host
+            content: ${PORT_FORWARDED_HOSTNAME}
+          - title: MySQL port
+            content: ${DATABASE_PORT_FORWARDED_PORT}
         env:
           MYSQL_DATABASE:
             default: ipam
-            expose: true
-          MYSQL_CONNECTION_STRING:
-            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
             expose: true
           MYSQL_HOST:
             default: ${CONTAINER_HOSTNAME}
@@ -59,8 +88,32 @@ spec:
             default: root
             expose: true
           MYSQL_URI:
-            default: ${MYSQL_CONNECTION_STRING}
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
             expose: true
+          MYSQL_CONNECTION_STRING:
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
+            expose: true
+        configs:
+          - path: /etc/my.cnf
+            template: |
+              [mysqld]
+              default-authentication-plugin=mysql_native_password
+              host-cache-size=0
+              skip-name-resolve
+              datadir=/var/lib/mysql
+              socket=/var/run/mysqld/mysqld.sock
+              secure-file-priv=/var/lib/mysql-files
+              user=mysql
+              max_allowed_packet=10M
+              performance_schema=off
+
+              pid-file=/var/run/mysqld/mysqld.pid
+              [client]
+              socket=/var/run/mysqld/mysqld.sock
+
+              !includedir /etc/mysql/conf.d/
+            permission: null
+            envsubst: null
 
     - name: backend
       template: GIT
@@ -73,9 +126,13 @@ spec:
           gitURL: https://github.com/InternetLink/IP-Management.git
           branch: main
           dockerfile: |
-            FROM node:20-alpine
+            FROM node:20-bookworm-slim
 
             WORKDIR /app
+
+            RUN apt-get update \
+              && apt-get install -y --no-install-recommends openssl ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
 
             COPY backend/package*.json ./
             RUN npm ci
@@ -105,7 +162,7 @@ spec:
           PORT:
             default: "3001"
           DATABASE_URL:
-            default: ${MYSQL_CONNECTION_STRING}
+            default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
           CORS_ORIGINS:
             default: https://${FRONTEND_DOMAIN}
           AUTH_SECRET:
@@ -132,14 +189,17 @@ spec:
               && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
               && rm -rf /var/lib/apt/lists/*
 
-            ARG NEXT_PUBLIC_API_URL
-            ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
             ARG HEROUI_AUTH_TOKEN
             ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
 
             COPY frontend/package*.json ./
             RUN npm ci
+
+            ARG NEXT_PUBLIC_API_URL=/api
+            ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+            ARG API_PROXY_TARGET
+            ENV API_PROXY_TARGET=${API_PROXY_TARGET}
 
             COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
             COPY frontend/src ./src
@@ -164,27 +224,34 @@ spec:
           PORT:
             default: "3003"
           HEROUI_AUTH_TOKEN:
-            default: ""
+            default: ${HEROUI_AUTH_TOKEN}
           NEXT_PUBLIC_API_URL:
-            default: https://${BACKEND_DOMAIN}/api
+            default: /api
+          API_PROXY_TARGET:
+            default: https://${BACKEND_DOMAIN}
 
 localization:
   zh-CN:
-    description: 前后端分离部署的 IPAM / Geofeed 系统，包含 NestJS 后端、Next.js 前端、MySQL、登录认证和 RFC 8805 Geofeed。
+    description: 前后端和数据库分离部署的 IPAM / Geofeed 系统，包含 MySQL、NestJS 后端、Next.js 前端、登录认证和 RFC 8805 Geofeed。
     readme: |
       # IPAM / Geofeed
 
-      该模板会部署三个服务，且不需要手动选择 Root Directory：
+      该模板会自动创建三个独立服务：
 
-      - MySQL 数据库
-      - NestJS 后端 API，从仓库根目录使用 `Dockerfile.backend` 构建
-      - Next.js 前端，从仓库根目录使用 `Dockerfile.frontend` 构建
+      - `mysql`：带持久化存储的 MySQL 8.0。
+      - `backend`：NestJS API，从仓库根目录使用内联 Dockerfile 构建。
+      - `frontend`：Next.js UI，从仓库根目录使用内联 Dockerfile 构建。
 
-      部署完成后：
+      你不需要手动选择 `backend/` 或 `frontend/` 目录。请把这个 YAML 当作 Zeabur 模板部署，不要用普通 Git 导入方式创建单个服务。
 
-      1. 打开前端域名。
-      2. 创建第一个管理员账号。
-      3. 确认 `NEXT_PUBLIC_API_URL` 指向后端域名并带 `/api` 后缀。
-      4. 确认后端 `CORS_ORIGINS` 包含前端域名。
+      ## 必填项
 
-      后端启动前会执行 `npm run db:push`，自动同步 Prisma schema。
+      - 为 `FRONTEND_DOMAIN` 生成 Zeabur 域名。
+      - 为 `BACKEND_DOMAIN` 生成 Zeabur 域名。
+      - `HEROUI_AUTH_TOKEN` 填写 HeroUI Pro 的 CI/CD Token。
+
+      ## 运行行为
+
+      - 后端从 MySQL 服务接收 `DATABASE_URL`，启动前会执行 `npm run db:push`。
+      - 前端默认请求 `/api`，由 Next.js 服务端通过 `API_PROXY_TARGET` 代理到后端服务。
+      - 第一次打开前端页面时创建第一个管理员账号。

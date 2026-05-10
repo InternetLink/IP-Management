@@ -6,14 +6,17 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
 ARG HEROUI_AUTH_TOKEN
 ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
 
 COPY frontend/package*.json ./
 RUN npm ci
+
+ARG NEXT_PUBLIC_API_URL=/api
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+ARG API_PROXY_TARGET
+ENV API_PROXY_TARGET=${API_PROXY_TARGET}
 
 COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
 COPY frontend/src ./src
