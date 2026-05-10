@@ -6,7 +6,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "nest start",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main.js",
     "test": "ts-node test/run-tests.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

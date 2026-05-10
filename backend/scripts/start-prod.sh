@@ -21,7 +21,16 @@ fi
 
 for attempt in $(seq 1 30); do
   if npm run db:push; then
-    exec node dist/main
+    entrypoint="${APP_ENTRYPOINT:-dist/src/main.js}"
+    if [ ! -f "$entrypoint" ] && [ -f "dist/main.js" ]; then
+      entrypoint="dist/main.js"
+    fi
+    if [ ! -f "$entrypoint" ]; then
+      echo "Backend entrypoint not found. Expected dist/src/main.js or dist/main.js."
+      find dist -maxdepth 3 -type f -name 'main.js' 2>/dev/null || true
+      exit 1
+    fi
+    exec node "$entrypoint"
   fi
 
   echo "Waiting for database... (${attempt}/30)"
