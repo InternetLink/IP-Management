@@ -145,9 +145,9 @@ spec:
             RUN npm run db:generate && npm run build
 
             ENV NODE_ENV=production
-            ENV PORT=3001
+            ENV PORT=8080
 
-            EXPOSE 3001
+            EXPOSE 8080
 
             CMD ["sh", "scripts/start-prod.sh"]
           watchPaths:
@@ -156,11 +156,11 @@ spec:
             - /zeabur.yaml
         ports:
           - id: web
-            port: 3001
+            port: 8080
             type: HTTP
         env:
           PORT:
-            default: "3001"
+            default: "8080"
           DATABASE_URL:
             default: mysql://${MYSQL_USERNAME}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}
           CORS_ORIGINS:
@@ -207,9 +207,9 @@ spec:
             RUN npm run build
 
             ENV NODE_ENV=production
-            ENV PORT=3003
+            ENV PORT=8080
 
-            EXPOSE 3003
+            EXPOSE 8080
 
             CMD ["npm", "run", "start"]
           watchPaths:
@@ -218,17 +218,17 @@ spec:
             - /zeabur.yaml
         ports:
           - id: web
-            port: 3003
+            port: 8080
             type: HTTP
         env:
           PORT:
-            default: "3003"
+            default: "8080"
           HEROUI_AUTH_TOKEN:
             default: ${HEROUI_AUTH_TOKEN}
           NEXT_PUBLIC_API_URL:
             default: /api
           API_PROXY_TARGET:
-            default: https://${BACKEND_DOMAIN}
+            default: http://${BACKEND_HOST}:8080
 
 localization:
   zh-CN:

@@ -46,7 +46,8 @@ function copyRequestHeaders(request: NextRequest) {
 async function proxy(request: NextRequest, context: RouteContext) {
   const params = await context.params;
   const path = params.path?.map(encodeURIComponent).join("/") ?? "";
-  const target = `${getApiProxyTarget()}/api/${path}${request.nextUrl.search}`;
+  const proxyTarget = getApiProxyTarget();
+  const target = `${proxyTarget}/api/${path}${request.nextUrl.search}`;
   const init: RequestInit = {
     method: request.method,
     headers: copyRequestHeaders(request),
@@ -58,7 +59,20 @@ async function proxy(request: NextRequest, context: RouteContext) {
     init.body = await request.arrayBuffer();
   }
 
-  const response = await fetch(target, init);
+  let response: Response;
+  try {
+    response = await fetch(target, init);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown proxy error";
+    return Response.json(
+      {
+        message: `API proxy failed to reach backend: ${message}`,
+        target: proxyTarget,
+      },
+      {status: 502},
+    );
+  }
+
   const headers = new Headers(response.headers);
   HOP_BY_HOP_HEADERS.forEach((header) => headers.delete(header));
 
