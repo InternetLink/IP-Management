@@ -1,9 +1,16 @@
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+ARG HEROUI_AUTH_TOKEN
+ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
 
 COPY frontend/package*.json ./
 RUN npm ci
