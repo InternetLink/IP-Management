@@ -218,7 +218,10 @@ export function PrefixTreePage() {
     <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 pb-10 pt-4">
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
-        <p className="text-muted shrink-0 text-sm">{t.prefixes.subtitle}</p>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-foreground text-2xl font-semibold">{t.nav.prefixes}</h1>
+          <p className="text-muted text-sm">{t.prefixes.subtitle}</p>
+        </div>
         <div className="flex items-center gap-2">
           <div className="relative">
             <Magnifier className="text-muted pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
