@@ -10,6 +10,7 @@ export type ParsedCIDR = {
 
 const IPV4_BITS = 32;
 const IPV6_BITS = 128;
+const MAX_FLOAT_IPS = Number.MAX_SAFE_INTEGER;
 
 export function parseCIDR(cidr: string): ParsedCIDR {
   if (typeof cidr !== 'string' || !cidr.includes('/')) {
@@ -153,10 +154,18 @@ export function cidrOverlaps(a: string, b: string): boolean {
   return rangeStart(pa) <= rangeEnd(pb) && rangeStart(pb) <= rangeEnd(pa);
 }
 
-export function countIPv4(cidr: string): number {
+export function countIPs(cidr: string): number {
   const parsed = parseCIDR(cidr);
-  if (parsed.version !== 4) return -1;
-  return 2 ** (IPV4_BITS - parsed.prefixLen);
+  const hostBits = parsed.bits - parsed.prefixLen;
+  if (parsed.version === 4) return 2 ** hostBits;
+  // IPv6: BigInt-precise, then truncate to MAX_SAFE_INTEGER for the Float column
+  const big = 1n << BigInt(hostBits);
+  return big > BigInt(MAX_FLOAT_IPS) ? MAX_FLOAT_IPS : Number(big);
+}
+
+export function countIPsExact(cidr: string): bigint {
+  const parsed = parseCIDR(cidr);
+  return 1n << BigInt(parsed.bits - parsed.prefixLen);
 }
 
 export function formatIP(ip: bigint, version: 4 | 6): string {

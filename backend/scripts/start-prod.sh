@@ -20,7 +20,7 @@ if [ -z "${DATABASE_URL:-}" ]; then
 fi
 
 for attempt in $(seq 1 30); do
-  if npm run db:push; then
+  if npm run db:deploy; then
     entrypoint="${APP_ENTRYPOINT:-dist/src/main.js}"
     if [ ! -f "$entrypoint" ] && [ -f "dist/main.js" ]; then
       entrypoint="dist/main.js"

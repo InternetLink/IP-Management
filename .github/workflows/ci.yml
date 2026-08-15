@@ -1,0 +1,338 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipam-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  public-checks:
+    name: Public checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: bash scripts/install-actionlint.sh
+
+      - name: Validate the CI workflow
+        run: .cache/tools/actionlint/1.7.7/actionlint .github/workflows/ci.yml
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate backend database client
+        working-directory: backend
+        run: npm run db:generate
+
+      - name: Run backend unit tests
+        working-directory: backend
+        run: npm test
+
+      - name: Check backend types
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Install public frontend dependencies
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+
+      - name: Run public frontend tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Check public frontend types
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Lint public frontend sources
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Verify image definitions without a daemon
+        env:
+          VERIFY_IMAGE_MAP_MODE: static
+        run: bash scripts/verify-image-map.sh
+
+      - name: Verify deployment configuration
+        run: bash scripts/verify-deployment.sh config
+
+  integration:
+    name: MySQL 8 integration tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CI_MYSQL_HOST: 127.0.0.1
+      TEST_DATABASE_URL: mysql://ipam_ci:ipam-ci-password@127.0.0.1:3306/ipam_ci_test
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: ipam-ci-root-password
+          MYSQL_DATABASE: ipam_ci_test
+          MYSQL_USER: ipam_ci
+          MYSQL_PASSWORD: ipam-ci-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --protocol=tcp --host=127.0.0.1 --user=root --password=ipam-ci-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate backend database client
+        working-directory: backend
+        run: npm run db:generate
+
+      - name: Grant integration database privileges
+        env:
+          MYSQL_PWD: ipam-ci-root-password
+        run: |
+          mysql --protocol=TCP --host=127.0.0.1 --user=root <<'SQL'
+          GRANT SELECT, INSERT, UPDATE, DELETE, ALTER, INDEX, REFERENCES, CREATE VIEW, SHOW VIEW, TRIGGER
+            ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
+          GRANT CREATE, DROP ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
+          GRANT PROCESS ON *.* TO 'ipam_ci'@'%';
+          FLUSH PRIVILEGES;
+          SQL
+
+      - name: Run backend integration tests
+        working-directory: backend
+        run: npm run test:integration
+
+  private-build:
+    name: Private frontend build
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    environment:
+      name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out protected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install authenticated frontend dependencies
+        working-directory: frontend
+        env:
+          HEROUI_AUTH_TOKEN: ${{ secrets.HEROUI_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HEROUI_AUTH_TOKEN:-}" ]]; then
+            printf 'ENVIRONMENT_BLOCKED component=heroui reason=secret-unavailable\n' >&2
+            exit 2
+          fi
+          npm ci
+
+      - name: Run private frontend tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Check private frontend types
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Lint private frontend sources
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build private frontend
+        working-directory: frontend
+        run: npm run build
+
+  container-image-map:
+    name: Container and image map
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    environment:
+      name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out protected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image without a package secret
+        run: docker buildx build -f Dockerfile.backend -t ipam-backend:qa --load .
+
+      - name: Build frontend image with an ephemeral BuildKit secret
+        env:
+          HEROUI_AUTH_TOKEN: ${{ secrets.HEROUI_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HEROUI_AUTH_TOKEN:-}" ]]; then
+            printf 'ENVIRONMENT_BLOCKED component=heroui reason=secret-unavailable\n' >&2
+            exit 2
+          fi
+          docker buildx build \
+            --secret id=heroui_token,env=HEROUI_AUTH_TOKEN \
+            -f Dockerfile.frontend \
+            -t ipam-frontend:qa \
+            --load .
+
+      - name: Build combined image with an ephemeral BuildKit secret
+        env:
+          HEROUI_AUTH_TOKEN: ${{ secrets.HEROUI_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HEROUI_AUTH_TOKEN:-}" ]]; then
+            printf 'ENVIRONMENT_BLOCKED component=heroui reason=secret-unavailable\n' >&2
+            exit 2
+          fi
+          docker buildx build \
+            --secret id=heroui_token,env=HEROUI_AUTH_TOKEN \
+            -f Dockerfile \
+            -t ipam-combined:qa \
+            --load .
+
+      - name: Verify image map and scan image metadata
+        env:
+          HEROUI_AUTH_TOKEN: ${{ secrets.HEROUI_AUTH_TOKEN }}
+          VERIFY_IMAGE_MAP_MODE: docker
+          VERIFY_IMAGE_MAP_REQUIRE_SECRET_SCAN: '1'
+          IPAM_BACKEND_IMAGE: ipam-backend:qa
+          IPAM_FRONTEND_IMAGE: ipam-frontend:qa
+          IPAM_COMBINED_IMAGE: ipam-combined:qa
+        run: bash scripts/verify-image-map.sh
+
+  github-protection:
+    name: GitHub protection
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    environment:
+      name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      deployments: read
+    steps:
+      - name: Check out protected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify repository and release protection
+        env:
+          # Configure this release Environment secret with read-only Administration
+          # and Environments metadata access for the repository protection API.
+          GH_TOKEN: ${{ secrets.GITHUB_PROTECTION_TOKEN }}
+          PROTECTION_WORKFLOW_PATH: .github/workflows/ci.yml
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            printf 'ENVIRONMENT_BLOCKED component=github-protection reason=token-unavailable\n' >&2
+            exit 2
+          fi
+          bash scripts/verify-github-protection.sh --evidence "$RUNNER_TEMP/github-protection.json"
+
+  release-gate:
+    name: release-gate
+    if: >-
+      always() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch')
+    needs:
+      - public-checks
+      - private-build
+      - integration
+      - container-image-map
+      - github-protection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Enforce successful release dependencies
+        env:
+          PUBLIC_CHECKS_RESULT: ${{ needs.public-checks.result }}
+          PRIVATE_BUILD_RESULT: ${{ needs.private-build.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          CONTAINER_IMAGE_MAP_RESULT: ${{ needs.container-image-map.result }}
+          GITHUB_PROTECTION_RESULT: ${{ needs.github-protection.result }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            local dependency="$1"
+            local result="$2"
+            if [[ "$result" != 'success' ]]; then
+              printf 'RELEASE_GATE_FAILED dependency=%s result=%s\n' "$dependency" "$result" >&2
+              exit 1
+            fi
+          }
+
+          require_success public-checks "$PUBLIC_CHECKS_RESULT"
+          require_success private-build "$PRIVATE_BUILD_RESULT"
+          require_success integration "$INTEGRATION_RESULT"
+          require_success container-image-map "$CONTAINER_IMAGE_MAP_RESULT"
+          require_success github-protection "$GITHUB_PROTECTION_RESULT"
+          printf 'RELEASE_GATE_OK\n'

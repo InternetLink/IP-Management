@@ -89,20 +89,55 @@ export function ipv6ToBigInt(ip: string): bigint {
   return result;
 }
 
-/** Convert BigInt back to IPv6 string (compressed) */
-export function bigIntToIPv6(num: bigint): string {
-  const parts: string[] = [];
-  for (let i = 0; i < 8; i++) {
-    parts.unshift((num & 0xffffn).toString(16));
-    num >>= 16n;
+/** Convert an IPv4 or IPv6 address to a comparable numeric value. */
+export function ipSortValue(address: string): bigint {
+  return address.includes(":") ? ipv6ToBigInt(address) : BigInt(ipv4ToNumber(address));
+}
+
+/** Convert BigInt to a compressed IPv6 string. */
+export function bigIntToIPv6(ip: bigint): string {
+  const groups: string[] = [];
+  for (let index = 7; index >= 0; index -= 1) {
+    groups.push(((ip >> BigInt(index * 16)) & 0xffffn).toString(16));
   }
-  // Compress consecutive zero groups
-  const full = parts.join(":");
-  const compressed = full
-    .replace(/\b0+/g, "")
-    .replace(/(^|:)0(:0)*(:|$)/, "::")
-    .replace(/:{3,}/, "::");
-  return compressed || "::";
+
+  let longestStart = -1;
+  let longestLength = 0;
+  for (let start = 0; start < groups.length;) {
+    if (groups[start] !== "0") {
+      start += 1;
+      continue;
+    }
+
+    let end = start;
+    while (end < groups.length && groups[end] === "0") {
+      end += 1;
+    }
+
+    const length = end - start;
+    if (length >= 2 && length > longestLength) {
+      longestStart = start;
+      longestLength = length;
+    }
+    start = end;
+  }
+
+  if (longestStart < 0) {
+    return groups.join(":");
+  }
+
+  const left = groups.slice(0, longestStart).join(":");
+  const right = groups.slice(longestStart + longestLength).join(":");
+  if (left && right) {
+    return `${left}::${right}`;
+  }
+  if (left) {
+    return `${left}::`;
+  }
+  if (right) {
+    return `::${right}`;
+  }
+  return "::";
 }
 
 /** Get detailed subnet info from a CIDR */
@@ -170,19 +205,25 @@ function getIPv6SubnetInfo(ip: string, prefix: number): SubnetInfo {
   const network = ipBig & maskBig;
   const hostBits = 128 - prefix;
   const broadcast = network | ((1n << BigInt(hostBits)) - 1n);
-  const totalHosts = Number(hostBits > 53 ? 2n ** BigInt(hostBits) : 2 ** hostBits);
+  const totalHosts = Number(1n << BigInt(hostBits));
+
+  // RFC 4291 Section 2.1 states that IPv6 has no broadcast addresses and that
+  // zero and one values are legal in address fields. RFC 6164 Section 6
+  // requires disabling subnet-router anycast on /127 inter-router links. This
+  // generic calculator therefore treats the complete IPv6 range as usable;
+  // deployment-specific reservations belong to allocation policy.
 
   return {
     cidr: `${bigIntToIPv6(network)}/${prefix}`,
     version: 6,
     networkAddress: bigIntToIPv6(network),
     broadcastAddress: bigIntToIPv6(broadcast),
-    firstUsable: bigIntToIPv6(network + 1n),
-    lastUsable: bigIntToIPv6(broadcast - 1n),
+    firstUsable: bigIntToIPv6(network),
+    lastUsable: bigIntToIPv6(broadcast),
     subnetMask: `/${prefix}`,
     wildcardMask: `/${128 - prefix} host bits`,
     totalHosts,
-    usableHosts: Math.max(0, totalHosts - 2),
+    usableHosts: totalHosts,
     prefix,
   };
 }
@@ -237,16 +278,27 @@ export function isSubsetOf(child: string, parent: string): boolean {
 }
 
 /** Split a CIDR into smaller subnets */
-export function splitCidr(cidr: string, newPrefix: number): string[] {
+export const MAX_SPLIT_RESULTS = 1024;
+
+export type SplitCidrResult =
+  | {readonly kind: "ok"; readonly subnets: string[]}
+  | {readonly kind: "over-limit"; readonly count: bigint; readonly limit: number};
+
+export function splitCidr(cidr: string, newPrefix: number): SplitCidrResult {
   const parsed = parseCidr(cidr);
-  if (!parsed) return [];
-  if (newPrefix <= parsed.prefix) return [cidr];
+  if (!parsed || !Number.isInteger(newPrefix)) return {kind: "ok", subnets: []};
 
   const maxPrefix = parsed.version === 4 ? 32 : 128;
-  if (newPrefix > maxPrefix) return [];
+  if (newPrefix < 0 || newPrefix > maxPrefix) return {kind: "ok", subnets: []};
+  if (newPrefix <= parsed.prefix) return {kind: "ok", subnets: [cidr]};
 
+  const subnetCountBig = 1n << BigInt(newPrefix - parsed.prefix);
+  if (subnetCountBig > BigInt(MAX_SPLIT_RESULTS)) {
+    return {kind: "over-limit", count: subnetCountBig, limit: MAX_SPLIT_RESULTS};
+  }
+
+  const count = Number(subnetCountBig);
   const results: string[] = [];
-  const count = Math.pow(2, newPrefix - parsed.prefix);
 
   if (parsed.version === 4) {
     const baseNet = ipv4ToNumber(parsed.ip);
@@ -266,7 +318,7 @@ export function splitCidr(cidr: string, newPrefix: number): string[] {
     }
   }
 
-  return results;
+  return {kind: "ok", subnets: results};
 }
 
 /** Detect conflicts between a new CIDR and existing CIDRs */

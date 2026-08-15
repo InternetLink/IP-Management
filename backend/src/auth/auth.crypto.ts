@@ -1,23 +1,34 @@
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'crypto';
+import { createHmac, randomBytes, scrypt, timingSafeEqual, type BinaryLike } from 'crypto';
+import { promisify } from 'util';
 
 const HASH_PREFIX = 'scrypt';
 const KEY_LENGTH = 64;
+const scryptAsync = promisify<BinaryLike, BinaryLike, number, Buffer>(scrypt);
 
 function base64url(input: Buffer | string) {
   return Buffer.from(input).toString('base64url');
 }
 
-export function hashPassword(password: string) {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, KEY_LENGTH).toString('hex');
-  return `${HASH_PREFIX}$${salt}$${hash}`;
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }
 
-export function verifyPassword(password: string, storedHash: string) {
-  const [prefix, salt, hash] = storedHash.split('$');
-  if (prefix !== HASH_PREFIX || !salt || !hash) return false;
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString('hex');
+  const hash = await scryptAsync(password, salt, KEY_LENGTH);
+  return `${HASH_PREFIX}$${salt}$${hash.toString('hex')}`;
+}
 
-  const actual = Buffer.from(scryptSync(password, salt, KEY_LENGTH).toString('hex'), 'hex');
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const parts = storedHash.split('$');
+  const [prefix, salt, hash] = parts;
+  if (parts.length !== 3 || prefix !== HASH_PREFIX || !salt || !hash) return false;
+  if (!new RegExp(`^[0-9a-f]{${KEY_LENGTH * 2}}$`, 'i').test(hash)) return false;
+
+  const actual = await scryptAsync(password, salt, KEY_LENGTH);
   const expected = Buffer.from(hash, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

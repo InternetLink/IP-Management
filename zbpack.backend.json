@@ -1,7 +1,7 @@
 {
   "app_dir": "backend",
-  "build_command": "npm run db:push && npm run build",
-  "start_command": "npm run start:prod",
+  "build_command": "npm run build",
+  "start_command": "sh scripts/start-prod.sh",
   "dockerfile": {
     "name": "backend"
   }

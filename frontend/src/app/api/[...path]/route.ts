@@ -1,81 +1,52 @@
 import {NextRequest} from "next/server";
 
+import {
+  copySafeResponseHeaders,
+  createRequestId,
+  fetchBackend,
+  REQUEST_ID_HEADER_NAME,
+  validateBrowserMutation,
+} from "../_lib/bff";
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const RESERVED_AUTH_PATHS = new Set([
+  "auth/bootstrap",
+  "auth/login",
+  "auth/logout",
+  "auth/me",
+]);
 
 type RouteContext = {
   params: Promise<{path?: string[]}> | {path?: string[]};
 };
 
-const HOP_BY_HOP_HEADERS = [
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "host",
-];
-
-function stripTrailingSlash(value: string) {
-  return value.replace(/\/+$/, "");
-}
-
-function stripApiSuffix(value: string) {
-  return stripTrailingSlash(value).replace(/\/api$/, "");
-}
-
-function getApiProxyTarget() {
-  const explicitTarget = process.env.API_PROXY_TARGET?.trim();
-  if (explicitTarget) return stripApiSuffix(explicitTarget);
-
-  const publicApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (publicApiUrl && /^https?:\/\//.test(publicApiUrl)) return stripApiSuffix(publicApiUrl);
-
-  return "http://127.0.0.1:3001";
-}
-
-function copyRequestHeaders(request: NextRequest) {
-  const headers = new Headers(request.headers);
-  HOP_BY_HOP_HEADERS.forEach((header) => headers.delete(header));
-  return headers;
-}
-
 async function proxy(request: NextRequest, context: RouteContext) {
-  const params = await context.params;
-  const path = params.path?.map(encodeURIComponent).join("/") ?? "";
-  const proxyTarget = getApiProxyTarget();
-  const target = `${proxyTarget}/api/${path}${request.nextUrl.search}`;
-  const init: RequestInit = {
-    method: request.method,
-    headers: copyRequestHeaders(request),
-    redirect: "manual",
-    cache: "no-store",
-  };
+  const rejection = validateBrowserMutation(request);
+  if (rejection) return rejection;
 
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    init.body = await request.arrayBuffer();
+  const params = await context.params;
+  const pathSegments = params.path ?? [];
+  const normalizedPath = pathSegments.map((segment) => segment.toLowerCase()).join("/");
+  if (RESERVED_AUTH_PATHS.has(normalizedPath)) {
+    return Response.json({message: "Not Found"}, {headers: {"cache-control": "no-store"}, status: 404});
   }
 
+  const path = pathSegments.map(encodeURIComponent).join("/");
+  const requestId = createRequestId();
   let response: Response;
   try {
-    response = await fetch(target, init);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown proxy error";
+    response = await fetchBackend(request, path, {requestId, search: request.nextUrl.search});
+  } catch {
     return Response.json(
-      {
-        message: `API proxy failed to reach backend: ${message}`,
-        target: proxyTarget,
-      },
-      {status: 502},
+      {message: "API proxy failed to reach backend"},
+      {headers: {"cache-control": "no-store", [REQUEST_ID_HEADER_NAME]: requestId}, status: 502},
     );
   }
 
-  const headers = new Headers(response.headers);
-  HOP_BY_HOP_HEADERS.forEach((header) => headers.delete(header));
-
+  const headers = copySafeResponseHeaders(response.headers);
+  headers.set(REQUEST_ID_HEADER_NAME, requestId);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

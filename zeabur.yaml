@@ -15,10 +15,14 @@ spec:
       type: DOMAIN
       name: Backend API domain
       description: Public domain for the NestJS API service.
-    - key: HEROUI_AUTH_TOKEN
+    - key: AUTH_SECRET_INPUT
       type: PASSWORD
-      name: HeroUI Pro CI/CD token
-      description: Required by @heroui-pro/react during frontend dependency installation.
+      name: API auth signing secret
+      description: HMAC secret for backend API auth tokens. Must be at least 32 characters. Generate with `openssl rand -base64 48`.
+    - key: BOOTSTRAP_TOKEN_INPUT
+      type: PASSWORD
+      name: First-admin bootstrap token
+      description: One-time token to create the first admin account via POST /api/auth/bootstrap. Must be at least 16 characters. Generate with `openssl rand -base64 32`. Set BOOTSTRAP_DISABLED=true after the first admin exists.
   readme: |
     # IPAM / Geofeed
 
@@ -34,11 +38,11 @@ spec:
 
     - Generate a Zeabur domain for `FRONTEND_DOMAIN`.
     - Generate a Zeabur domain for `BACKEND_DOMAIN`.
-    - Fill `HEROUI_AUTH_TOKEN` with your HeroUI Pro CI/CD token.
+    - Publish the frontend image from Docker-capable CI with the required BuildKit `heroui_token` secret.
 
     ## Runtime behavior
 
-    - The backend receives `DATABASE_URL` from the MySQL service and runs `npm run db:push` before starting.
+    - The backend receives `DATABASE_URL` from the MySQL service and runs `npm run db:deploy` before starting.
     - The frontend calls `/api` by default and proxies requests to the backend service through `API_PROXY_TARGET`.
     - The first browser visit asks you to create the first administrator account.
   services:
@@ -126,7 +130,9 @@ spec:
           repo: 1234126366
           branch: main
           dockerfile: |
-            FROM node:20-bookworm-slim
+            # syntax=docker/dockerfile:1.7
+
+            FROM node:20-bookworm-slim AS builder
 
             WORKDIR /app
 
@@ -135,25 +141,63 @@ spec:
               && rm -rf /var/lib/apt/lists/*
 
             COPY backend/package*.json ./
+            COPY backend/prisma ./prisma
             RUN npm ci
 
-            COPY backend/prisma ./prisma
             COPY backend/nest-cli.json backend/tsconfig.json ./
             COPY backend/src ./src
-            COPY backend/scripts ./scripts
-
             RUN npm run db:generate && npm run build
 
-            ENV NODE_ENV=production
-            ENV PORT=8080
+            FROM node:20-bookworm-slim AS production-deps
+
+            WORKDIR /app
+
+            RUN apt-get update \
+              && apt-get install -y --no-install-recommends openssl ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+
+            COPY backend/package*.json ./
+            COPY backend/prisma ./prisma
+            RUN npm ci --omit=dev && npm cache clean --force
+
+            FROM node:20-bookworm-slim AS runtime
+
+            WORKDIR /app
+
+            RUN apt-get update \
+              && apt-get install -y --no-install-recommends openssl ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+
+            ENV NODE_ENV=production \
+                PORT=8080
+
+            LABEL io.ipam.image.name="ipam-backend" \
+                  io.ipam.image.dockerfile="Dockerfile.backend" \
+                  io.ipam.image.secret-required="false" \
+                  io.ipam.image.entrypoint="sh scripts/start-prod.sh" \
+                  io.ipam.image.ports="8080" \
+                  io.ipam.image.runtime-uid="1000"
+
+            COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
+            COPY --from=builder --chown=node:node /app/dist ./dist
+            COPY --chown=node:node backend/package*.json ./
+            COPY --chown=node:node backend/prisma ./prisma
+            COPY --chown=node:node backend/scripts ./scripts
+
+            USER node
 
             EXPOSE 8080
 
-            CMD ["sh", "scripts/start-prod.sh"]
+            ENTRYPOINT ["sh", "scripts/start-prod.sh"]
           watchPaths:
             - /backend/**
             - /Dockerfile.backend
             - /zeabur.yaml
+        healthCheck:
+          type: HTTP
+          port: web
+          http:
+            path: /api/health/ready
         ports:
           - id: web
             port: 8080
@@ -166,9 +210,13 @@ spec:
           CORS_ORIGINS:
             default: https://${FRONTEND_DOMAIN}
           AUTH_SECRET:
-            default: ${PASSWORD}
-          AUTH_TOKEN_TTL_DAYS:
-            default: "30"
+            default: ${AUTH_SECRET_INPUT}
+          BOOTSTRAP_TOKEN:
+            default: ${BOOTSTRAP_TOKEN_INPUT}
+          BOOTSTRAP_DISABLED:
+            default: "false"
+          AUTH_TOKEN_TTL_HOURS:
+            default: "24"
 
     - name: frontend
       template: GIT
@@ -181,7 +229,9 @@ spec:
           repo: 1234126366
           branch: main
           dockerfile: |
-            FROM node:20-bookworm-slim
+            # syntax=docker/dockerfile:1.7
+
+            FROM node:20-bookworm-slim AS builder
 
             WORKDIR /app
 
@@ -189,33 +239,53 @@ spec:
               && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
               && rm -rf /var/lib/apt/lists/*
 
-            ARG HEROUI_AUTH_TOKEN
-            ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
-
             COPY frontend/package*.json ./
-            RUN npm ci
+            RUN --mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true npm ci
 
             ARG NEXT_PUBLIC_API_URL=/api
-            ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-            ARG API_PROXY_TARGET
-            ENV API_PROXY_TARGET=${API_PROXY_TARGET}
+            ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+                NEXT_TELEMETRY_DISABLED=1
 
             COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
             COPY frontend/src ./src
 
             RUN npm run build
 
-            ENV NODE_ENV=production
-            ENV PORT=8080
+            FROM node:20-bookworm-slim AS runtime
+
+            WORKDIR /app
+
+            ENV NODE_ENV=production \
+                NEXT_TELEMETRY_DISABLED=1 \
+                HOSTNAME=0.0.0.0 \
+                PORT=8080 \
+                APP_ORIGIN=http://localhost:8080 \
+                API_PROXY_TARGET=http://127.0.0.1:3001
+
+            LABEL io.ipam.image.name="ipam-frontend" \
+                  io.ipam.image.dockerfile="Dockerfile.frontend" \
+                  io.ipam.image.secret-required="true" \
+                  io.ipam.image.entrypoint="node server.js" \
+                  io.ipam.image.ports="8080" \
+                  io.ipam.image.runtime-uid="1000"
+
+            COPY --from=builder --chown=node:node /app/.next/standalone ./
+            COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+
+            USER node
 
             EXPOSE 8080
 
-            CMD ["npm", "run", "start"]
+            ENTRYPOINT ["node", "server.js"]
           watchPaths:
             - /frontend/**
             - /Dockerfile.frontend
             - /zeabur.yaml
+        healthCheck:
+          type: HTTP
+          port: web
+          http:
+            path: /
         ports:
           - id: web
             port: 8080
@@ -223,12 +293,12 @@ spec:
         env:
           PORT:
             default: "8080"
-          HEROUI_AUTH_TOKEN:
-            default: ${HEROUI_AUTH_TOKEN}
           NEXT_PUBLIC_API_URL:
             default: /api
           API_PROXY_TARGET:
             default: http://${BACKEND_HOST}:8080
+          APP_ORIGIN:
+            default: https://${FRONTEND_DOMAIN}
 
 localization:
   zh-CN:
@@ -252,6 +322,6 @@ localization:
 
       ## 运行行为
 
-      - 后端从 MySQL 服务接收 `DATABASE_URL`，启动前会执行 `npm run db:push`。
+      - 后端从 MySQL 服务接收 `DATABASE_URL`，启动前会执行 `npm run db:deploy`。
       - 前端默认请求 `/api`，由 Next.js 服务端通过 `API_PROXY_TARGET` 代理到后端服务。
       - 第一次打开前端页面时创建第一个管理员账号。

@@ -1,17 +1,43 @@
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+
 import { AppModule } from './app.module';
+import { parseOriginAllowlist } from './http/origin-allowlist';
+import { formatLogEvent } from './lib/structured-log';
+
+const logger = new Logger('Bootstrap');
+
+function assertEnv() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || secret.length < 32) {
+    logger.error(formatLogEvent('startup.configuration.invalid', {
+      reason: 'AUTH_SECRET must contain at least 32 characters',
+    }));
+    process.exit(1);
+  }
+}
 
 async function bootstrap() {
+  assertEnv();
   const app = await NestFactory.create(AppModule);
-  const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3003')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+  app.enableShutdownHooks();
+  const corsOrigins = parseOriginAllowlist();
   app.enableCors({ origin: corsOrigins, credentials: true });
   app.setGlobalPrefix('api');
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  await app.listen(process.env.PORT ?? 3001);
-  console.log(`IPAM API running on http://localhost:${process.env.PORT ?? 3001}/api`);
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    transformOptions: { enableImplicitConversion: false },
+  }));
+  const port = process.env.PORT ?? '3001';
+  await app.listen(port);
+  logger.log(formatLogEvent('startup.ready', { port }));
 }
-bootstrap();
+
+void bootstrap().catch((error: unknown) => {
+  logger.error(formatLogEvent('startup.failed', {
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+  }));
+  process.exitCode = 1;
+});

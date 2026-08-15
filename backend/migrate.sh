@@ -1,12 +1,9 @@
-#!/bin/bash
-# Run this script from the backend directory to apply the schema changes
-set -e
+#!/usr/bin/env bash
+# Retired: production schema changes belong to scripts/start-prod.sh.
+set -euo pipefail
 
-echo "==> Pushing new schema (drops old tables, creates prefixes table)..."
-npx prisma db push --accept-data-loss
-
-echo "==> Generating Prisma client..."
-npx prisma generate
-
-echo "==> Done! Schema applied successfully."
-echo "==> You can now restart the backend with: npm run start:dev"
+printf '%s\n' \
+  'backend/migrate.sh is retired and cannot apply schema changes.' \
+  'Production startup runs scripts/start-prod.sh, which invokes npm run db:deploy.' \
+  'For local development, create a named migration with npm run db:migrate.' >&2
+exit 1

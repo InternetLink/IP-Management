@@ -23,3 +23,9 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 
+
+# local orchestration state (never committed)
+.omo/
+.sisyphus/
+.cache/
+.cortexkit/

@@ -1,4 +1,6 @@
-FROM node:20-bookworm-slim
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -7,18 +9,51 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY backend/package*.json ./
+COPY backend/prisma ./prisma
 RUN npm ci
 
-COPY backend/prisma ./prisma
 COPY backend/nest-cli.json backend/tsconfig.json ./
 COPY backend/src ./src
-COPY backend/scripts ./scripts
-
 RUN npm run db:generate && npm run build
 
-ENV NODE_ENV=production
-ENV PORT=8080
+FROM node:20-bookworm-slim AS production-deps
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY backend/package*.json ./
+COPY backend/prisma ./prisma
+RUN npm ci --omit=dev && npm cache clean --force
+
+FROM node:20-bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production \
+    PORT=8080
+
+LABEL io.ipam.image.name="ipam-backend" \
+      io.ipam.image.dockerfile="Dockerfile.backend" \
+      io.ipam.image.secret-required="false" \
+      io.ipam.image.entrypoint="sh scripts/start-prod.sh" \
+      io.ipam.image.ports="8080" \
+      io.ipam.image.runtime-uid="1000"
+
+COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --chown=node:node backend/package*.json ./
+COPY --chown=node:node backend/prisma ./prisma
+COPY --chown=node:node backend/scripts ./scripts
+
+USER node
 
 EXPOSE 8080
 
-CMD ["sh", "scripts/start-prod.sh"]
+ENTRYPOINT ["sh", "scripts/start-prod.sh"]

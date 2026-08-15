@@ -19,6 +19,7 @@ model User {
   passwordHash String    @db.VarChar(255)
   role         String    @default("admin") @db.VarChar(20)
   isActive     Boolean   @default(true)
+  tokenVersion Int       @default(0)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -26,36 +27,78 @@ model User {
   @@map("users")
 }
 
+// ------- One-time bootstrap state -------
+// Todo 13 owns the transaction and transition semantics for this singleton.
+model BootstrapState {
+  id                String    @id @default("bootstrap")
+  completedAt       DateTime?
+  completedByUserId String?
+
+  @@map("bootstrap_states")
+}
+
+// ------- Address-space transaction locks -------
+model AddressSpaceLock {
+  key String @id @db.VarChar(191)
+
+  @@map("address_space_locks")
+}
+
 // ------- Prefix (Hierarchical CIDR Tree) -------
 // Replaces the old IpBlock + Subnet flat models.
 // Any CIDR block — from /8 down to /32 — is a Prefix.
 // parentId creates an arbitrary-depth tree.
 model Prefix {
-  id          String    @id @default(uuid())
-  cidr        String    @unique @db.VarChar(50)
-  version     Int       // 4 or 6
-  parentId    String?   // null = root (RIR allocation)
-  status      String    @default("Active") @db.VarChar(20) // Active, Reserved, Available, Allocated, Deprecated
-  rir         String?   @db.VarChar(10)  // Root nodes: APNIC, ARIN, RIPE, LACNIC, AFRINIC
-  vlan        Int?
-  gateway     String?
-  assignedTo  String?
-  totalIPs    Float     // use Float for IPv6
-  usedIPs     Float     @default(0)
-  isPool      Boolean   @default(false) // When true, individual IPs can be generated/assigned
-  depth       Int       @default(0)
-  description String    @default("")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String   @id @default(uuid())
+  cidr          String   @unique @db.VarChar(50)
+  version       Int // 4 or 6
+  parentId      String? // null = root (RIR allocation)
+  status        String   @default("Active") @db.VarChar(20) // Active, Reserved, Available, Allocated, Deprecated
+  rir           String?  @db.VarChar(10) // Root nodes: APNIC, ARIN, RIPE, LACNIC, AFRINIC
+  vlan          Int?
+  gateway       String?
+  assignedTo    String?
+  totalIPs      Float // use Float for IPv6
+  usedIPs       Float    @default(0)
+  totalIPsExact Decimal? @db.Decimal(65, 0)
+  usedIPsExact  Decimal? @db.Decimal(65, 0)
+  isPool        Boolean  @default(false) // When true, individual IPs can be generated/assigned
+  depth         Int      @default(0)
+  description   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  parent      Prefix?   @relation("PrefixTree", fields: [parentId], references: [id], onDelete: Cascade)
-  children    Prefix[]  @relation("PrefixTree")
+  parent      Prefix?        @relation("PrefixTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Prefix[]       @relation("PrefixTree")
   allocations Allocation[]
   geofeed     GeofeedEntry[]
-  auditLogs   AuditLog[] @relation("PrefixAudit")
+  auditLogs   AuditLog[]     @relation("PrefixAudit")
 
   @@index([parentId])
+  @@index([version, parentId])
+  @@index([status])
   @@map("prefixes")
+}
+
+// ------- Staged capacity migration state -------
+// The database CHECK constraints in the expand migration enforce the singleton
+// id and the finite stage set. Application code owns transition semantics.
+model MigrationState {
+  id                String    @id @default("capacity-v1") @db.VarChar(32)
+  stage             String    @default("EXPANDED") @db.VarChar(20)
+  targetVersion     String    @default("decimal-65-0") @db.VarChar(32)
+  batchCursor       String?   @db.VarChar(191)
+  expectedRowCount  BigInt    @default(0) @db.UnsignedBigInt
+  processedRowCount BigInt    @default(0) @db.UnsignedBigInt
+  checksum          String    @default("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") @db.Char(64)
+  startedAt         DateTime?
+  updatedAt         DateTime  @default(now()) @updatedAt
+  completedAt       DateTime?
+  failureCode       String?   @db.VarChar(64)
+  leaseOwner        String?   @db.VarChar(191)
+  leaseExpiresAt    DateTime?
+
+  @@map("migration_states")
 }
 
 // ------- Allocation (Individual IP within a Prefix pool) -------
@@ -72,9 +115,10 @@ model Allocation {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  prefix       Prefix    @relation(fields: [prefixId], references: [id], onDelete: Cascade)
+  prefix Prefix @relation(fields: [prefixId], references: [id], onDelete: Cascade)
 
   @@unique([prefixId, ipAddress])
+  @@index([prefixId, status])
   @@map("allocations")
 }
 
@@ -90,9 +134,11 @@ model GeofeedEntry {
   validationMessage String?  @db.VarChar(255)
   lastUpdated       DateTime @default(now())
 
-  prefixId          String?
-  prefixRef         Prefix?  @relation(fields: [prefixId], references: [id], onDelete: SetNull)
+  prefixId  String?
+  prefixRef Prefix? @relation(fields: [prefixId], references: [id], onDelete: SetNull)
 
+  @@index([prefixId])
+  @@index([validation])
   @@map("geofeed_entries")
 }
 
@@ -106,10 +152,15 @@ model AuditLog {
   resourceLabel String   @db.VarChar(255)
   changes       Json?
   user          String   @default("admin") @db.VarChar(50)
+  userId        String?  @db.VarChar(50)
 
-  prefixId      String?
-  prefix        Prefix?  @relation("PrefixAudit", fields: [prefixId], references: [id], onDelete: SetNull)
+  prefixId String?
+  prefix   Prefix? @relation("PrefixAudit", fields: [prefixId], references: [id], onDelete: SetNull)
 
+  @@index([timestamp(sort: Desc)])
+  @@index([resourceType, action])
+  @@index([prefixId])
+  @@index([userId, timestamp])
   @@map("audit_logs")
 }
 

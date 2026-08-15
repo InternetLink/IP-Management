@@ -1,33 +1,87 @@
-FROM node:20-bookworm-slim
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-bookworm-slim AS backend-builder
+
+WORKDIR /app/backend
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY backend/package*.json ./
+COPY backend/prisma ./prisma
+RUN npm ci
+
+COPY backend/nest-cli.json backend/tsconfig.json ./
+COPY backend/src ./src
+RUN npm run db:generate && npm run build
+
+FROM node:20-bookworm-slim AS backend-production-deps
+
+WORKDIR /app/backend
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY backend/package*.json ./
+COPY backend/prisma ./prisma
+RUN npm ci --omit=dev && npm cache clean --force
+
+FROM node:20-bookworm-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY frontend/package*.json ./
+RUN --mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true npm ci
+
+ARG NEXT_PUBLIC_API_URL=/api
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_TELEMETRY_DISABLED=1
+
+COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
+COPY frontend/src ./src
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runtime
 
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libsecret-1-0 openssl ca-certificates \
+  && apt-get install -y --no-install-recommends openssl ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-COPY backend/package*.json ./backend/
-RUN cd backend && npm ci
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3003 \
+    BACKEND_PORT=3001 \
+    APP_ORIGIN=http://localhost:3003 \
+    API_PROXY_TARGET=http://127.0.0.1:3001 \
+    CORS_ORIGINS=http://localhost:3003
 
-COPY frontend/package*.json ./frontend/
-ARG HEROUI_AUTH_TOKEN
-ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
-RUN cd frontend && npm ci
+LABEL io.ipam.image.name="ipam-combined" \
+      io.ipam.image.dockerfile="Dockerfile" \
+      io.ipam.image.secret-required="true" \
+      io.ipam.image.entrypoint="sh /app/scripts/start-combined.sh" \
+      io.ipam.image.ports="public=3003,backend=3001" \
+      io.ipam.image.runtime-uid="1000"
 
-COPY backend ./backend
-COPY frontend ./frontend
+COPY --from=backend-production-deps --chown=node:node /app/backend/node_modules ./backend/node_modules
+COPY --from=backend-builder --chown=node:node /app/backend/dist ./backend/dist
+COPY --chown=node:node backend/package*.json ./backend/
+COPY --chown=node:node backend/prisma ./backend/prisma
+COPY --chown=node:node backend/scripts ./backend/scripts
+COPY --from=frontend-builder --chown=node:node /app/frontend/.next/standalone ./frontend/
+COPY --from=frontend-builder --chown=node:node /app/frontend/.next/static ./frontend/.next/static
+COPY --chown=node:node scripts/start-combined.sh ./scripts/start-combined.sh
 
-ARG NEXT_PUBLIC_API_URL=/api
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-RUN cd backend && npm run db:generate && npm run build
-RUN cd frontend && npm run build
-
-ENV NODE_ENV=production
-ENV PORT=3003
-ENV BACKEND_PORT=3001
-ENV CORS_ORIGINS=http://localhost:3003
+USER node
 
 EXPOSE 3003
 
-CMD ["sh", "-c", "cd /app/backend && sh scripts/start-prod.sh & backend_pid=$!; for i in $(seq 1 90); do if ! kill -0 $backend_pid 2>/dev/null; then wait $backend_pid; exit $?; fi; node -e \"const net=require('net'); const socket=net.connect(Number(process.env.BACKEND_PORT || 3001), '127.0.0.1'); socket.on('connect',()=>{socket.end(); process.exit(0)}); socket.on('error',()=>process.exit(1)); setTimeout(()=>process.exit(1), 1000);\" && break; echo 'Waiting for backend...'; sleep 1; done; if ! kill -0 $backend_pid 2>/dev/null; then wait $backend_pid; exit $?; fi; cd /app/frontend && npm run start"]
+ENTRYPOINT ["sh", "/app/scripts/start-combined.sh"]

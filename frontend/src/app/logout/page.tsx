@@ -11,8 +11,19 @@ export default function LogoutPage() {
   const {logout} = useAuth();
 
   useEffect(() => {
-    logout();
-    router.replace("/login");
+    let active = true;
+    void (async () => {
+      try {
+        await logout();
+      } catch {
+        // The BFF clears cookies on handled backend failures.
+      }
+      if (active) router.replace("/login");
+    })();
+
+    return () => {
+      active = false;
+    };
   }, [logout, router]);
 
   return (
