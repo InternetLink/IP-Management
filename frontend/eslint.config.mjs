@@ -5,13 +5,6 @@ const config = [
   ...nextVitals,
   ...nextTypescript,
   {
-    rules: {
-      "@typescript-eslint/no-explicit-any": "off",
-      "react-hooks/set-state-in-effect": "off",
-      "react-hooks/use-memo": "off",
-    },
-  },
-  {
     ignores: [
       ".next/**",
       "out/**",
