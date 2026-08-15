@@ -1,5 +1,7 @@
-import { Controller, Get, Put, Body } from '@nestjs/common';
+import { Body, Controller, Get, Put } from '@nestjs/common';
 import { SettingsService } from './settings.service';
+import { UpdateSettingsDto } from './settings.dto';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('settings')
 export class SettingsController {
@@ -9,5 +11,6 @@ export class SettingsController {
   get() { return this.service.get(); }
 
   @Put()
-  update(@Body() data: any) { return this.service.update(data); }
+  @Roles('admin')
+  update(@Body() dto: UpdateSettingsDto) { return this.service.update(dto); }
 }

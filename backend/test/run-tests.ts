@@ -1,9 +1,13 @@
 import { cidrTests } from './cidr.test';
 import { authServiceTests } from './auth-service.test';
+import { auditQueryDtoTests } from './audit-query-dto.test';
+import { auditServiceTests } from './audit-service.test';
 import { geofeedServiceTests } from './geofeed-service.test';
+import { geofeedDtoTests } from './geofeed-dto.test';
 import { prefixesServiceTests } from './prefixes-service.test';
 import { capacityExactTests } from './capacity-exact.test';
 import { dashboardServiceTests } from './dashboard-service.test';
+import { settingsDtoTests } from './settings-dto.test';
 import type { TestCase } from './test-utils';
 
 const suites: Array<{ name: string; tests: TestCase[] }> = [
@@ -11,8 +15,12 @@ const suites: Array<{ name: string; tests: TestCase[] }> = [
   { name: 'Exact capacity', tests: capacityExactTests },
   { name: 'Dashboard', tests: dashboardServiceTests },
   { name: 'AuthService', tests: authServiceTests },
+  { name: 'AuditQueryDto', tests: auditQueryDtoTests },
+  { name: 'AuditService', tests: auditServiceTests },
   { name: 'PrefixesService', tests: prefixesServiceTests },
   { name: 'GeofeedService', tests: geofeedServiceTests },
+  { name: 'Geofeed DTO', tests: geofeedDtoTests },
+  { name: 'Settings DTO', tests: settingsDtoTests },
 ];
 
 async function main() {

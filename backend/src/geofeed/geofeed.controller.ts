@@ -1,25 +1,31 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Query, Res } from '@nestjs/common';
-import { Response } from 'express';
-import { GeofeedService } from './geofeed.service';
-import { CreateGeofeedDto, UpdateGeofeedDto, ImportGeofeedDto } from './geofeed.dto';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Res } from '@nestjs/common';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+
 import { Public } from '../auth/public.decorator';
+import { CreateGeofeedDto, GenerateGeofeedQueryDto, ImportGeofeedDto, ListGeofeedQueryDto, UpdateGeofeedDto } from './geofeed.dto';
+import { GeofeedService } from './geofeed.service';
+
+type CsvResponse = NodeJS.WritableStream & {
+  setHeader(name: string, value: string): void;
+};
 
 @Controller('geofeed')
 export class GeofeedController {
   constructor(private service: GeofeedService) {}
 
   @Get()
-  findAll(@Query('search') search?: string, @Query('countryCode') countryCode?: string) {
-    return this.service.findAll({ search, countryCode });
+  findAll(@Query() query: ListGeofeedQueryDto) {
+    return this.service.findAll(query);
   }
 
   @Public()
   @Get('generate')
-  async generate(@Res() res: Response, @Query('header') header?: string, @Query('asn') asn?: string) {
-    const csv = await this.service.generateCSV(header, asn);
+  async generate(@Res() res: CsvResponse, @Query() query: GenerateGeofeedQueryDto) {
+    const csv = this.service.generateCSV(query.header, query.asn);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="geofeed.csv"');
-    res.send(csv);
+    await pipeline(Readable.from(csv), res);
   }
 
   @Get(':id')
