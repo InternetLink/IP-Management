@@ -3,14 +3,17 @@
 import {Card, Chip, Spinner} from "@heroui/react";
 import {KPI, BarChart, PieChart, ChartTooltip, DataGrid, type DataGridColumn} from "@heroui-pro/react";
 import {useMemo} from "react";
-import type {AuditAction, AuditEntry} from "../data/types";
-import {AUDIT_ACTION_COLORS} from "../data/types";
+import {RequestState} from "../components/request-state";
 import {formatIPCount} from "../lib/cidr";
 import {api} from "../lib/api";
+import type {AuditAction, AuditEntry} from "../lib/api-types";
 import {useApiData} from "../lib/use-api";
 import {useI18n} from "../i18n";
 
 const RIR_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+const AUDIT_ACTION_COLORS: Partial<Record<AuditAction, "success" | "accent" | "danger" | "warning" | "default">> = {
+  Created: "success", Updated: "accent", Deleted: "danger", Imported: "warning", Exported: "default", Generated: "accent", Split: "accent",
+};
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -24,25 +27,35 @@ function formatRelativeTime(iso: string): string {
 
 export function DashboardPage() {
   const {t} = useI18n();
-  const {data: stats, loading} = useApiData(() => api.dashboard.getStats(), []);
+  const {data: stats, error, refetch, status} = useApiData((signal) => api.dashboard.getStats(signal), []);
 
   const auditColumns = useMemo<DataGridColumn<AuditEntry>[]>(() => [
-    { id: "timestamp", header: t.audit.timestamp, accessorKey: "timestamp", minWidth: 120, cell: (item: any) => <span className="text-muted tabular-nums text-xs">{formatRelativeTime(item.timestamp)}</span> },
-    { id: "action", header: t.audit.action, accessorKey: "action", minWidth: 100, cell: (item: any) => <Chip color={AUDIT_ACTION_COLORS[item.action as AuditAction] ?? "default"} size="sm" variant="soft">{item.action}</Chip> },
-    { id: "resourceType", header: t.audit.resourceType, accessorKey: "resourceType", minWidth: 100, cell: (item: any) => <span className="text-xs">{item.resourceType}</span> },
-    { id: "resourceLabel", header: t.audit.resource, accessorKey: "resourceLabel", minWidth: 180, isRowHeader: true, cell: (item: any) => <span className="font-mono text-xs font-medium">{item.resourceLabel}</span> },
-    { id: "user", header: t.audit.user, accessorKey: "user", minWidth: 80, cell: (item: any) => <span className="text-muted text-xs">{item.user}</span> },
+    { id: "timestamp", header: t.audit.timestamp, accessorKey: "timestamp", minWidth: 120, cell: (item: AuditEntry) => <span className="text-muted tabular-nums text-xs">{formatRelativeTime(item.timestamp)}</span> },
+    { id: "action", header: t.audit.action, accessorKey: "action", minWidth: 100, cell: (item: AuditEntry) => <Chip color={AUDIT_ACTION_COLORS[item.action] ?? "default"} size="sm" variant="soft">{item.action}</Chip> },
+    { id: "resourceType", header: t.audit.resourceType, accessorKey: "resourceType", minWidth: 100, cell: (item: AuditEntry) => <span className="text-xs">{item.resourceType}</span> },
+    { id: "resourceLabel", header: t.audit.resource, accessorKey: "resourceLabel", minWidth: 180, isRowHeader: true, cell: (item: AuditEntry) => <span className="font-mono text-xs font-medium">{item.resourceLabel}</span> },
+    { id: "user", header: t.audit.user, accessorKey: "user", minWidth: 80, cell: (item: AuditEntry) => <span className="text-muted text-xs">{item.user}</span> },
   ], [t]);
 
-  if (loading || !stats) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  if (!stats) {
+    if (status === "error") {
+      return (
+        <div className="mx-auto max-w-7xl px-5 py-10">
+          <RequestState error={error} errorTitle="Unable to load dashboard" onRetryAction={refetch} status={status} />
+        </div>
+      );
+    }
+    return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+  }
 
   const totalIPv4 = stats.totalIPv4 ?? 0;
   const utilizationRate = stats.utilizationRate ?? 0;
-  const rirDistribution = (stats.rirDistribution ?? []).map((r: any, i: number) => ({...r, color: RIR_COLORS[i % RIR_COLORS.length]}));
-  const allocationTrend = stats.allocationTrend ?? [];
+  const rirDistribution = stats.rirDistribution.map((r, i) => ({...r, color: RIR_COLORS[i % RIR_COLORS.length]}));
+  const allocationTrend = stats.allocationTrend;
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 pb-10 pt-4">
+        <RequestState error={error} errorTitle="Unable to refresh dashboard" onRetryAction={refetch} status={status} />
       {/* KPI Row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KPI>
@@ -105,7 +118,7 @@ export function DashboardPage() {
             <div className="relative">
               <PieChart height={200} width={200}>
                 <PieChart.Pie cornerRadius={6} cx="50%" cy="50%" data={rirDistribution} dataKey="value" innerRadius="65%" nameKey="name" paddingAngle={-8} strokeWidth={0}>
-                  {rirDistribution.map((r: any, idx: number) => (
+                  {rirDistribution.map((r, idx) => (
                     <PieChart.Cell key={idx} fill={r.color} />
                   ))}
                 </PieChart.Pie>
@@ -117,7 +130,7 @@ export function DashboardPage() {
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
-              {rirDistribution.map((entry: any) => (
+              {rirDistribution.map((entry) => (
                 <div key={entry.name} className="flex items-center gap-3">
                   <span className="size-3 shrink-0 rounded-full" style={{backgroundColor: entry.color}} />
                   <span className="text-foreground flex-1 text-sm">{entry.name}</span>
@@ -170,8 +183,8 @@ export function DashboardPage() {
           aria-label="Recent activity"
           columns={auditColumns}
           contentClassName="min-w-[600px]"
-          data={stats.recentAudit ?? []}
-          getRowId={(item: any) => item.id}
+                data={stats.recentAudit}
+                getRowId={(item: AuditEntry) => item.id}
         />
       </div>
     </div>

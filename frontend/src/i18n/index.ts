@@ -41,6 +41,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const saved = localStorage.getItem('ipam-locale') as Locale | null;
     if (saved && translations[saved]) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Hydration-safe locale restoration runs after the initial client render.
       setLocaleState(saved);
     }
     // Don't auto-set zh-TW — let users choose via the language switcher.
@@ -53,11 +54,28 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('ipam-locale', l);
   }, []);
 
+  // Keep <html lang> in sync with the active locale AFTER hydration.
+  // SSR and the first client render intentionally keep lang="en" (see note above);
+  // this effect only runs on the client, so it cannot cause a hydration mismatch.
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   return createElement(I18nCtx.Provider, { value: { locale, setLocale, t: translations[locale], mounted } }, children);
 }
 
 export function useI18n() {
   return useContext(I18nCtx);
+}
+
+/**
+ * Substitutes `{name}` placeholders in a translated string.
+ * Values are coerced with String() so numbers can be passed directly.
+ */
+export function formatMessage(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match,
+  );
 }
 
 export const LOCALE_LABELS: Record<Locale, string> = {

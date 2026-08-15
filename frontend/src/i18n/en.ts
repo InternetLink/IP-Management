@@ -17,6 +17,7 @@ const en = {
     description: 'Description',
     noData: 'No data',
     loading: 'Loading...',
+    loadMore: 'Load more',
     confirm: 'Confirm',
     reset: 'Reset',
     all: 'All',
@@ -93,6 +94,16 @@ const en = {
     filterReserved: 'Reserved',
     noIPs: 'No IP addresses yet',
     noIPsHint: 'Click "Generate IPs" to populate this prefix with individual IP addresses.',
+    cidr: 'CIDR',
+    rir: 'RIR',
+    vlan: 'VLAN',
+    gateway: 'Gateway',
+    expiryDate: 'Expiry date',
+    cascadeWarning: 'Children: {children}; Allocations: {allocations}. Cascade delete cannot be undone.',
+    bulkEditTitle: 'Bulk edit {count} IPs',
+    bulkEditDesc: 'Only selected fields will be changed. Empty assignee and expiry keep current values.',
+    bulkKeepCurrent: 'Keep current',
+    bulkAssigneePlaceholder: 'Leave empty to keep current assignee',
   },
 
   // Geofeed
@@ -113,6 +124,12 @@ const en = {
     generateGeofeed: 'Generate Geofeed',
     publicLink: 'Public Geofeed URL',
     publicLinkDesc: 'Share this URL in WHOIS inetnum remarks or serve it at /.well-known/geofeed.',
+    copyLink: 'Copy geofeed URL',
+    openLink: 'Open geofeed URL',
+    searchLabel: 'Search geofeed entries',
+    deleteEntryConfirm: 'Delete geofeed entry {prefix}?',
+    importInstructions: 'Paste RFC 8805 geofeed CSV data. Format: prefix,country_code,region,city,postal_code',
+    importCsvLabel: 'Geofeed CSV data',
   },
 
   // Tools
@@ -122,8 +139,6 @@ const en = {
     cidrCalcDesc: 'Enter a CIDR notation to calculate subnet details.',
     subnetSplitter: 'Subnet Splitter',
     splitDesc: 'Split a CIDR into smaller subnets.',
-    ipLookup: 'IP Lookup',
-    lookupDesc: 'Search for an IP address in your managed space.',
     cidrNotation: 'CIDR Notation',
     sourceCIDR: 'Source CIDR',
     newPrefix: 'New Prefix Length',
@@ -137,7 +152,6 @@ const en = {
     totalHosts: 'Total Hosts',
     usableHosts: 'Usable Hosts',
     ipClass: 'IP Class',
-    enterIP: 'Enter an IP address to search your managed prefixes and allocations.',
   },
 
   // Audit
@@ -150,6 +164,8 @@ const en = {
     changes: 'Changes',
     user: 'User',
     allActions: 'All Actions',
+    allResources: 'All Resources',
+    searchLabel: 'Search audit log',
     details: 'Details',
   },
 

@@ -1,10 +1,57 @@
 "use client";
 
 import type {ReactNode} from "react";
-import {Button, Checkbox, Input, Label, Separator, TextArea, TextField, Spinner, toast} from "@heroui/react";
+import {Button, Checkbox, Input, Label, Separator, TextArea, TextField, toast} from "@heroui/react";
 import {useState, useEffect, useCallback} from "react";
-import {api} from "../lib/api";
+import {RequestState} from "../components/request-state";
+import {api, type SettingsResponse} from "../lib/api";
+import {useApiData} from "../lib/use-api";
 import {useI18n} from "../i18n";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Request failed";
+}
+
+type SettingsFormState = {
+  asn: string;
+  contactEmail: string;
+  defaultCountryCode: string;
+  defaultRIR: string;
+  expiryWarningDays: string;
+  geofeedAutoASN: boolean;
+  geofeedHeader: string;
+  geofeedPublicUrl: string;
+  organizationName: string;
+  utilizationThreshold: string;
+};
+
+const EMPTY_SETTINGS: SettingsFormState = {
+  asn: "",
+  contactEmail: "",
+  defaultCountryCode: "",
+  defaultRIR: "",
+  expiryWarningDays: "",
+  geofeedAutoASN: false,
+  geofeedHeader: "",
+  geofeedPublicUrl: "",
+  organizationName: "",
+  utilizationThreshold: "",
+};
+
+function toSettingsForm(settings: SettingsResponse): SettingsFormState {
+  return {
+    asn: settings.asn,
+    contactEmail: settings.contactEmail,
+    defaultCountryCode: settings.defaultCountryCode,
+    defaultRIR: settings.defaultRIR,
+    expiryWarningDays: String(settings.expiryWarningDays),
+    geofeedAutoASN: settings.geofeedAutoASN,
+    geofeedHeader: settings.geofeedHeader,
+    geofeedPublicUrl: settings.geofeedPublicUrl ?? "",
+    organizationName: settings.organizationName,
+    utilizationThreshold: String(settings.utilizationThreshold),
+  };
+}
 
 /**
  * Prisma AppSettings schema fields:
@@ -14,49 +61,35 @@ import {useI18n} from "../i18n";
  */
 export function SettingsPage() {
   const {t} = useI18n();
-  const [settings, setSettings] = useState({
-    organizationName: "",
-    asn: "",
-    contactEmail: "",
-    defaultRIR: "APNIC",
-    geofeedHeader: "",
-    geofeedAutoASN: true,
-    defaultCountryCode: "TW",
-    geofeedPublicUrl: "",
-    expiryWarningDays: "30",
-    utilizationThreshold: "85",
-  });
-  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<SettingsFormState>({...EMPTY_SETTINGS});
+  const [loadedSnapshot, setLoadedSnapshot] = useState<SettingsFormState | null>(null);
+  const [settingsVersion, setSettingsVersion] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordForm, setPasswordForm] = useState({currentPassword: "", newPassword: "", confirmPassword: ""});
+  const {
+    data: loadedSettings,
+    error: loadError,
+    refetch: loadSettings,
+    status: loadStatus,
+  } = useApiData((signal) => api.settings.get(signal), []);
 
   useEffect(() => {
-    api.settings.get().then((data: any) => {
-      if (data) {
-        setSettings({
-          organizationName: data.organizationName ?? "NetOps Inc.",
-          asn: data.asn ?? "",
-          contactEmail: data.contactEmail ?? "",
-          defaultRIR: data.defaultRIR ?? "APNIC",
-          geofeedHeader: data.geofeedHeader ?? "",
-          geofeedAutoASN: data.geofeedAutoASN ?? true,
-          defaultCountryCode: data.defaultCountryCode ?? "TW",
-          geofeedPublicUrl: data.geofeedPublicUrl ?? "",
-          expiryWarningDays: String(data.expiryWarningDays ?? 30),
-          utilizationThreshold: String(data.utilizationThreshold ?? 85),
-        });
-      }
-    }).catch(() => {
-      // Use defaults if API fails
-    }).finally(() => setLoading(false));
-  }, []);
+    if (!loadedSettings) return;
+    const snapshot = toSettingsForm(loadedSettings);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- The async API snapshot initializes a separately editable draft.
+    setSettings(snapshot);
+    setLoadedSnapshot(snapshot);
+    setSettingsVersion(loadedSettings.version);
+  }, [loadedSettings]);
 
-  const handleSave = useCallback(async (e: React.FormEvent) => {
+  const handleSave = useCallback(async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (settingsVersion === null || loadStatus !== "success") return;
+
     setSaving(true);
     try {
-      await api.settings.update({
+      const saved = await api.settings.update({
         organizationName: settings.organizationName,
         asn: settings.asn,
         contactEmail: settings.contactEmail,
@@ -67,14 +100,24 @@ export function SettingsPage() {
         geofeedPublicUrl: settings.geofeedPublicUrl || null,
         expiryWarningDays: Number(settings.expiryWarningDays),
         utilizationThreshold: Number(settings.utilizationThreshold),
+        expectedVersion: settingsVersion,
       });
+      const savedSnapshot = toSettingsForm(saved);
+      setSettings(savedSnapshot);
+      setLoadedSnapshot(savedSnapshot);
+      setSettingsVersion(saved.version);
       toast.success(t.common.save);
-    } catch (err: any) {
-      toast.danger(err.message);
+    } catch (err: unknown) {
+      toast.danger(errorMessage(err));
     } finally {
       setSaving(false);
     }
-  }, [settings, t]);
+  }, [loadStatus, settings, settingsVersion, t]);
+
+  const handleReset = useCallback(() => {
+    if (!loadedSnapshot) return;
+    setSettings({...loadedSnapshot});
+  }, [loadedSnapshot]);
 
   const handleChangePassword = useCallback(async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
@@ -98,18 +141,22 @@ export function SettingsPage() {
       });
       setPasswordForm({currentPassword: "", newPassword: "", confirmPassword: ""});
       toast.success("Password updated");
-    } catch (err: any) {
-      toast.danger(err.message);
+    } catch (err: unknown) {
+      toast.danger(errorMessage(err));
     } finally {
       setPasswordSaving(false);
     }
   }, [passwordForm]);
 
-  if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
-
   return (
     <form className="mx-auto flex max-w-5xl flex-col gap-4 px-5 pb-10 pt-4" onSubmit={handleSave}>
       <p className="text-muted text-sm">{t.settings.subtitle}</p>
+      <RequestState error={loadError} errorTitle="Unable to load settings" onRetryAction={loadSettings} status={loadStatus} />
+      <fieldset
+        aria-label="Application settings"
+        className="contents"
+        disabled={loadStatus !== "success" || settingsVersion === null}
+      >
       <Separator />
       <SettingsRow label={t.settings.orgName} description={t.settings.orgNameDesc}>
         <TextField value={settings.organizationName} onChange={(v) => setSettings(s => ({...s, organizationName: v}))}>
@@ -159,6 +206,7 @@ export function SettingsPage() {
           <Input fullWidth type="number" />
         </TextField>
       </SettingsRow>
+      </fieldset>
       <Separator />
       <SettingsRow label="Account password" description="Change the password for the currently signed-in administrator.">
         <TextField value={passwordForm.currentPassword} onChange={(v) => setPasswordForm(s => ({...s, currentPassword: v}))}>
@@ -179,8 +227,8 @@ export function SettingsPage() {
       </SettingsRow>
       <Separator />
       <footer className="flex items-center justify-end gap-2 pt-2">
-        <Button type="reset" variant="ghost">{t.common.reset}</Button>
-        <Button type="submit" isDisabled={saving}>{t.common.save}</Button>
+        <Button type="button" variant="ghost" isDisabled={saving || loadedSnapshot === null} onPress={handleReset}>{t.common.reset}</Button>
+        <Button type="submit" isDisabled={saving || settingsVersion === null || loadStatus !== "success"}>{t.common.save}</Button>
       </footer>
     </form>
   );
