@@ -2,31 +2,24 @@
 
 import type {ReactNode} from "react";
 
-import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react";
+import {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 
-import {api, clearAuthToken, getAuthToken, setAuthToken} from "./api";
+import {api, type ApiAuthUser} from "./api";
 
-export type AuthUser = {
-  id: string;
-  username: string;
-  email?: string | null;
-  role: string;
-};
+export type AuthUser = ApiAuthUser;
 
 type AuthContextValue = {
-  bootstrap: (data: {username: string; password: string; email?: string}) => Promise<void>;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refresh: () => Promise<void>;
   user: AuthUser | null;
 };
 
 const AuthContext = createContext<AuthContextValue>({
-  bootstrap: async () => {},
   loading: true,
   login: async () => {},
-  logout: () => {},
+  logout: async () => {},
   refresh: async () => {},
   user: null,
 });
@@ -34,54 +27,91 @@ const AuthContext = createContext<AuthContextValue>({
 export function AuthProvider({children}: {children: ReactNode}) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(false);
+  const refreshControllerRef = useRef<AbortController | null>(null);
+  const requestGenerationRef = useRef(0);
 
-  const logout = useCallback(() => {
-    clearAuthToken();
-    setUser(null);
+  const invalidateRefresh = useCallback(() => {
+    refreshControllerRef.current?.abort();
+    refreshControllerRef.current = null;
+    requestGenerationRef.current += 1;
+    return requestGenerationRef.current;
   }, []);
+
+  const logout = useCallback(async () => {
+    const requestGeneration = invalidateRefresh();
+    if (mountedRef.current) {
+      setUser(null);
+      setLoading(false);
+    }
+
+    try {
+      await api.auth.logout();
+    } finally {
+      if (mountedRef.current && requestGeneration === requestGenerationRef.current) {
+        setUser(null);
+        setLoading(false);
+      }
+    }
+  }, [invalidateRefresh]);
 
   const refresh = useCallback(async () => {
-    const token = getAuthToken();
-    if (!token) {
-      setLoading(false);
-      setUser(null);
-      return;
-    }
+    const requestGeneration = invalidateRefresh();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
 
+    if (!mountedRef.current) return;
     setLoading(true);
     try {
-      const currentUser = await api.auth.me();
+      const currentUser = await api.auth.me(controller.signal);
+      if (
+        !mountedRef.current ||
+        controller.signal.aborted ||
+        requestGeneration !== requestGenerationRef.current
+      ) return;
       setUser(currentUser);
     } catch {
-      clearAuthToken();
+      if (
+        !mountedRef.current ||
+        controller.signal.aborted ||
+        requestGeneration !== requestGenerationRef.current
+      ) return;
       setUser(null);
     } finally {
-      setLoading(false);
+      if (refreshControllerRef.current === controller) refreshControllerRef.current = null;
+      if (
+        mountedRef.current &&
+        !controller.signal.aborted &&
+        requestGeneration === requestGenerationRef.current
+      ) setLoading(false);
     }
-  }, []);
+  }, [invalidateRefresh]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    mountedRef.current = true;
+    queueMicrotask(() => { void refresh(); });
+    return () => {
+      mountedRef.current = false;
+      invalidateRefresh();
+    };
+  }, [invalidateRefresh, refresh]);
 
   const login = useCallback(async (username: string, password: string) => {
+    const requestGeneration = invalidateRefresh();
     const result = await api.auth.login({username, password});
-    setAuthToken(result.token);
-    setUser(result.user);
-  }, []);
-
-  const bootstrap = useCallback(async (data: {username: string; password: string; email?: string}) => {
-    const result = await api.auth.bootstrap(data);
-    setAuthToken(result.token);
-    setUser(result.user);
-  }, []);
+    if (mountedRef.current && requestGeneration === requestGenerationRef.current) {
+      setUser(result.user);
+      setLoading(false);
+    }
+  }, [invalidateRefresh]);
 
   const value = useMemo(() => ({
-    bootstrap,
     loading,
     login,
     logout,
     refresh,
     user,
-  }), [bootstrap, loading, login, logout, refresh, user]);
+  }), [loading, login, logout, refresh, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
