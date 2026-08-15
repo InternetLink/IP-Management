@@ -2,10 +2,14 @@ import { cidrTests } from './cidr.test';
 import { authServiceTests } from './auth-service.test';
 import { geofeedServiceTests } from './geofeed-service.test';
 import { prefixesServiceTests } from './prefixes-service.test';
+import { capacityExactTests } from './capacity-exact.test';
+import { dashboardServiceTests } from './dashboard-service.test';
 import type { TestCase } from './test-utils';
 
 const suites: Array<{ name: string; tests: TestCase[] }> = [
   { name: 'CIDR', tests: cidrTests },
+  { name: 'Exact capacity', tests: capacityExactTests },
+  { name: 'Dashboard', tests: dashboardServiceTests },
   { name: 'AuthService', tests: authServiceTests },
   { name: 'PrefixesService', tests: prefixesServiceTests },
   { name: 'GeofeedService', tests: geofeedServiceTests },
