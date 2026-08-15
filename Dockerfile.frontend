@@ -1,4 +1,6 @@
-FROM node:20-bookworm-slim
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -6,26 +8,40 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-ARG HEROUI_AUTH_TOKEN
-ENV HEROUI_AUTH_TOKEN=${HEROUI_AUTH_TOKEN}
-
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true npm ci
 
 ARG NEXT_PUBLIC_API_URL=/api
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-ARG API_PROXY_TARGET
-ENV API_PROXY_TARGET=${API_PROXY_TARGET}
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_TELEMETRY_DISABLED=1
 
 COPY frontend/next-env.d.ts frontend/next.config.ts frontend/tsconfig.json frontend/postcss.config.mjs frontend/eslint.config.mjs ./
 COPY frontend/src ./src
-
 RUN npm run build
 
-ENV NODE_ENV=production
-ENV PORT=8080
+FROM node:20-bookworm-slim AS runtime
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=8080 \
+    APP_ORIGIN=http://localhost:8080 \
+    API_PROXY_TARGET=http://127.0.0.1:3001
+
+LABEL io.ipam.image.name="ipam-frontend" \
+      io.ipam.image.dockerfile="Dockerfile.frontend" \
+      io.ipam.image.secret-required="true" \
+      io.ipam.image.entrypoint="node server.js" \
+      io.ipam.image.ports="8080" \
+      io.ipam.image.runtime-uid="1000"
+
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+
+USER node
 
 EXPOSE 8080
 
-CMD ["npm", "run", "start"]
+ENTRYPOINT ["node", "server.js"]
