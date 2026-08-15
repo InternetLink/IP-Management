@@ -8,6 +8,8 @@ import { prefixesServiceTests } from './prefixes-service.test';
 import { capacityExactTests } from './capacity-exact.test';
 import { dashboardServiceTests } from './dashboard-service.test';
 import { settingsDtoTests } from './settings-dto.test';
+import { loginThrottleTests } from './login-throttle.test';
+import { originAllowlistTests } from './origin-allowlist.test';
 import type { TestCase } from './test-utils';
 
 const suites: Array<{ name: string; tests: TestCase[] }> = [
@@ -15,6 +17,8 @@ const suites: Array<{ name: string; tests: TestCase[] }> = [
   { name: 'Exact capacity', tests: capacityExactTests },
   { name: 'Dashboard', tests: dashboardServiceTests },
   { name: 'AuthService', tests: authServiceTests },
+  { name: 'LoginThrottle', tests: loginThrottleTests },
+  { name: 'Origin allowlist', tests: originAllowlistTests },
   { name: 'AuditQueryDto', tests: auditQueryDtoTests },
   { name: 'AuditService', tests: auditServiceTests },
   { name: 'PrefixesService', tests: prefixesServiceTests },
