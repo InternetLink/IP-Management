@@ -137,6 +137,7 @@ jobs:
           MYSQL_PWD: ipam-ci-root-password
         run: |
           mysql --protocol=TCP --host=127.0.0.1 --user=root <<'SQL'
+          SET GLOBAL log_bin_trust_function_creators = 1;
           GRANT SELECT, INSERT, UPDATE, DELETE, ALTER, INDEX, REFERENCES, CREATE VIEW, SHOW VIEW, TRIGGER
             ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
           GRANT CREATE, DROP ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
