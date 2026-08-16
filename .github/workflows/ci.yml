@@ -141,6 +141,7 @@ jobs:
             ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
           GRANT CREATE, DROP ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
           GRANT PROCESS ON *.* TO 'ipam_ci'@'%';
+          GRANT SELECT ON performance_schema.* TO 'ipam_ci'@'%';
           FLUSH PRIVILEGES;
           SQL
 

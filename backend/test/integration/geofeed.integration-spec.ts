@@ -14,6 +14,7 @@ import { UpdateGeofeedDto } from '../../src/geofeed/geofeed.dto';
 import { GeofeedService } from '../../src/geofeed/geofeed.service';
 import { countIPs, parseCIDR } from '../../src/lib/cidr';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { executeMysqlTextProtocol } from './mysql-test-utils';
 
 describe('Geofeed bounded and atomic behavior', () => {
   let app: INestApplication;
@@ -43,7 +44,7 @@ describe('Geofeed bounded and atomic behavior', () => {
   });
 
   afterEach(async () => {
-    await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS geofeed_import_failure_test');
+    await executeMysqlTextProtocol('DROP TRIGGER IF EXISTS geofeed_import_failure_test');
   });
 
   afterAll(async () => {
@@ -118,7 +119,7 @@ describe('Geofeed bounded and atomic behavior', () => {
   });
 
   it('rolls back accepted rows and hides unexpected write details', async () => {
-    await prisma.$executeRawUnsafe(`
+    await executeMysqlTextProtocol(`
       CREATE TRIGGER geofeed_import_failure_test
       BEFORE INSERT ON geofeed_entries
       FOR EACH ROW

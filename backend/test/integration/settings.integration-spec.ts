@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { SettingsService } from '../../src/settings/settings.service';
+import { executeMysqlTextProtocol } from './mysql-test-utils';
 
 const AUDIT_FAILURE_TRIGGER = 'settings_audit_failure_test';
 
@@ -35,13 +36,13 @@ describe('settings persistence and audit invariants', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
+    await executeMysqlTextProtocol(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
     await prisma.auditLog.deleteMany({ where: { resourceType: 'Settings' } });
     await prisma.appSettings.deleteMany();
   });
 
   afterAll(async () => {
-    await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
+    await executeMysqlTextProtocol(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
     await app.close();
   });
 
@@ -104,7 +105,7 @@ describe('settings persistence and audit invariants', () => {
 
   it('rolls back the settings update when the audit insert fails', async () => {
     await service.get();
-    await prisma.$executeRawUnsafe(`
+    await executeMysqlTextProtocol(`
       CREATE TRIGGER ${AUDIT_FAILURE_TRIGGER}
       BEFORE INSERT ON audit_logs
       FOR EACH ROW
@@ -118,7 +119,7 @@ describe('settings persistence and audit invariants', () => {
     try {
       await expect(service.update({ organizationName: 'Must roll back' })).rejects.toThrow();
     } finally {
-      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
+      await executeMysqlTextProtocol(`DROP TRIGGER IF EXISTS ${AUDIT_FAILURE_TRIGGER}`);
     }
 
     await expect(prisma.appSettings.findUniqueOrThrow({ where: { id: 'default' } })).resolves.toMatchObject({
