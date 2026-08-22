@@ -302,7 +302,8 @@ jobs:
     name: release-gate
     if: >-
       always() &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch')
     needs:
       - public-checks
@@ -316,6 +317,7 @@ jobs:
     steps:
       - name: Enforce successful release dependencies
         env:
+          CI_EVENT_NAME: ${{ github.event_name }}
           PUBLIC_CHECKS_RESULT: ${{ needs.public-checks.result }}
           PRIVATE_BUILD_RESULT: ${{ needs.private-build.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
@@ -323,18 +325,34 @@ jobs:
           GITHUB_PROTECTION_RESULT: ${{ needs.github-protection.result }}
         run: |
           set -euo pipefail
-          require_success() {
+          require_result() {
             local dependency="$1"
             local result="$2"
-            if [[ "$result" != 'success' ]]; then
-              printf 'RELEASE_GATE_FAILED dependency=%s result=%s\n' "$dependency" "$result" >&2
+            local expected="$3"
+            if [[ "$result" != "$expected" ]]; then
+              printf 'RELEASE_GATE_FAILED dependency=%s result=%s expected=%s\n' \
+                "$dependency" "$result" "$expected" >&2
               exit 1
             fi
           }
 
-          require_success public-checks "$PUBLIC_CHECKS_RESULT"
-          require_success private-build "$PRIVATE_BUILD_RESULT"
-          require_success integration "$INTEGRATION_RESULT"
-          require_success container-image-map "$CONTAINER_IMAGE_MAP_RESULT"
-          require_success github-protection "$GITHUB_PROTECTION_RESULT"
+          require_result public-checks "$PUBLIC_CHECKS_RESULT" success
+          require_result integration "$INTEGRATION_RESULT" success
+
+          case "$CI_EVENT_NAME" in
+            pull_request)
+              require_result private-build "$PRIVATE_BUILD_RESULT" skipped
+              require_result container-image-map "$CONTAINER_IMAGE_MAP_RESULT" skipped
+              require_result github-protection "$GITHUB_PROTECTION_RESULT" skipped
+              ;;
+            push|workflow_dispatch)
+              require_result private-build "$PRIVATE_BUILD_RESULT" success
+              require_result container-image-map "$CONTAINER_IMAGE_MAP_RESULT" success
+              require_result github-protection "$GITHUB_PROTECTION_RESULT" success
+              ;;
+            *)
+              printf 'RELEASE_GATE_FAILED event=%s reason=unsupported-event\n' "$CI_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
           printf 'RELEASE_GATE_OK\n'
