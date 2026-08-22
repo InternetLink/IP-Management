@@ -288,7 +288,7 @@ jobs:
         env:
           # Configure this release Environment secret with read-only Administration
           # and Environments metadata access for the repository protection API.
-          GH_TOKEN: ${{ secrets.GITHUB_PROTECTION_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROTECTION_READ_TOKEN }}
           PROTECTION_WORKFLOW_PATH: .github/workflows/ci.yml
         run: |
           set -euo pipefail
