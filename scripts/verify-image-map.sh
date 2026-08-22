@@ -7,6 +7,10 @@ OUTPUT_PATH="${IMAGE_MAP_OUTPUT:-}"
 TEMP_DIR="$(mktemp -d)"
 ROWS_FILE="$TEMP_DIR/images.tsv"
 
+# Minimum Dockerfile frontend that understands `--mount=type=secret,...,env=...`.
+SECRET_ENV_MIN_FRONTEND_MAJOR=1
+SECRET_ENV_MIN_FRONTEND_MINOR=10
+
 cleanup() {
   rm -rf "$TEMP_DIR"
 }
@@ -88,6 +92,43 @@ assert_secret_policy() {
   assert_count "$file" '--mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true[[:space:]]+npm ci' "$expected_mounts" "secret-mount-$file"
 }
 
+# The `env=` option on `RUN --mount=type=secret` exists only from Dockerfile
+# frontend 1.10.0 onward. Older frontends abort at build-definition parse time
+# with `unexpected key 'env'`, before any stage runs. Every definition that uses
+# the option must therefore pin a frontend at or above that floor. A file may
+# embed several inline Dockerfiles (zeabur.yaml), so each secret mount is matched
+# against the syntax directive that precedes it rather than against the file.
+assert_secret_env_frontend_version() {
+  local file="$1"
+  local violations
+
+  grep -Fq -- 'env=HEROUI_AUTH_TOKEN' "$file" || return 0
+
+  violations="$(awk \
+    -v min_major="$SECRET_ENV_MIN_FRONTEND_MAJOR" \
+    -v min_minor="$SECRET_ENV_MIN_FRONTEND_MINOR" '
+    match($0, /#[[:space:]]*syntax=docker\/dockerfile:[^[:space:]]+/) {
+      version = substr($0, RSTART, RLENGTH)
+      sub(/.*docker\/dockerfile:/, "", version)
+      sub(/@.*/, "", version)
+      next
+    }
+    /env=HEROUI_AUTH_TOKEN/ {
+      if (version == "") { print "line" NR "=no-syntax-directive"; next }
+      if (version !~ /^[0-9]+\.[0-9]+/) { print "line" NR "=unpinned-" version; next }
+      split(version, parts, ".")
+      if (parts[1] + 0 < min_major || (parts[1] + 0 == min_major && parts[2] + 0 < min_minor)) {
+        print "line" NR "=frontend-" version
+      }
+    }
+  ' "$file" | tr '\n' ' ')"
+
+  if [ -n "$violations" ]; then
+    info "secret mount env= needs Dockerfile frontend >= ${SECRET_ENV_MIN_FRONTEND_MAJOR}.${SECRET_ENV_MIN_FRONTEND_MINOR}: $file [ ${violations}]"
+    fail "secret-env-frontend-version-$(basename "$file")"
+  fi
+}
+
 static_checks() {
   local backend="$ROOT_DIR/Dockerfile.backend"
   local frontend="$ROOT_DIR/Dockerfile.frontend"
@@ -117,6 +158,10 @@ static_checks() {
   assert_secret_policy "$frontend" 1
   assert_secret_policy "$combined" 1
   assert_secret_policy "$zeabur" 1
+  assert_secret_env_frontend_version "$backend"
+  assert_secret_env_frontend_version "$frontend"
+  assert_secret_env_frontend_version "$combined"
+  assert_secret_env_frontend_version "$zeabur"
   assert_not_contains "$backend" '(heroui_token|HEROUI_AUTH_TOKEN)' 'backend-secret-reference'
   assert_not_contains "$zeabur" '^[[:space:]]*(- key:|HEROUI_AUTH_TOKEN:)[[:space:]]*HEROUI_AUTH_TOKEN' 'zeabur-token-variable'
 
