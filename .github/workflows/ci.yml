@@ -25,7 +25,7 @@ jobs:
       contents: read
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -36,7 +36,7 @@ jobs:
         run: .cache/tools/actionlint/1.7.7/actionlint .github/workflows/ci.yml
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -88,6 +88,39 @@ jobs:
       - name: Verify deployment configuration
         run: bash scripts/verify-deployment.sh config
 
+      - name: Run branch-protection policy fixtures
+        run: bash scripts/test-github-protection-policy.sh
+
+      - name: Run platform renderer fixtures
+        run: bash scripts/test-platform-config-renderer.sh
+
+      - name: Run deployment all-mode fixtures
+        run: bash scripts/test-verify-deployment-all.sh
+
+      - name: Run immutable image push fixtures
+        run: bash scripts/test-capture-pushed-image-digests.sh
+
+      - name: Run private npm userconfig fixtures
+        run: bash scripts/test-npm-ci-private.sh
+
+      - name: Check release shell scripts
+        run: >-
+          shellcheck -S warning
+          scripts/verify-image-map.sh
+          scripts/capture-pushed-image-digests.sh
+          scripts/test-capture-pushed-image-digests.sh
+          scripts/npm-ci-private.sh
+          scripts/test-npm-ci-private.sh
+          scripts/ci-local.sh
+          scripts/verify-deployment.sh
+          scripts/verify-deployment-all.sh
+          scripts/verify-github-protection.sh
+          scripts/test-github-protection-policy.sh
+          scripts/test-platform-config-renderer.sh
+          scripts/test-verify-deployment-all.sh
+          scripts/fixtures/verify-deployment-all/docker
+          scripts/fixtures/verify-deployment-all/curl
+
   integration:
     name: MySQL 8 integration tests
     runs-on: ubuntu-latest
@@ -113,12 +146,12 @@ jobs:
           --health-retries=30
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -146,6 +179,10 @@ jobs:
           FLUSH PRIVILEGES;
           SQL
 
+      - name: Run the full migration matrix
+        working-directory: backend
+        run: TEST_DATABASE_URL="$TEST_DATABASE_URL" bash scripts/verify-migrations.sh all
+
       - name: Run backend integration tests
         working-directory: backend
         run: npm run test:integration
@@ -162,13 +199,13 @@ jobs:
       contents: read
     steps:
       - name: Check out protected source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -184,7 +221,7 @@ jobs:
             printf 'ENVIRONMENT_BLOCKED component=heroui reason=secret-unavailable\n' >&2
             exit 2
           fi
-          npm ci
+          bash ../scripts/npm-ci-private.sh .
 
       - name: Run private frontend tests
         working-directory: frontend
@@ -203,27 +240,118 @@ jobs:
         run: npm run build
 
   container-image-map:
-    name: Container and image map
+    name: Publish immutable release images
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+      always() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch') &&
+      needs.public-checks.result == 'success' &&
+      needs.integration.result == 'success' &&
+      needs.private-build.result == 'success' &&
+      needs.github-protection.result == 'success'
+    needs:
+      - public-checks
+      - integration
+      - private-build
+      - github-protection
     environment:
       name: release
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
+    env:
+      CI_MYSQL_HOST: 127.0.0.1
+      TEST_DATABASE_URL: mysql://ipam_ci:ipam-ci-password@127.0.0.1:3306/ipam_ci_test
+      IPAM_BACKEND_IMAGE: ghcr.io/internetlink/ipam-backend:${{ github.sha }}
+      IPAM_FRONTEND_IMAGE: ghcr.io/internetlink/ipam-frontend:${{ github.sha }}
+      IPAM_COMBINED_IMAGE: ghcr.io/internetlink/ipam-combined:${{ github.sha }}
+      OCI_IMAGE_SOURCE: https://github.com/${{ github.repository }}
+      OCI_IMAGE_REVISION: ${{ github.sha }}
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: ipam-ci-root-password
+          MYSQL_DATABASE: ipam_ci_test
+          MYSQL_USER: ipam_ci
+          MYSQL_PASSWORD: ipam-ci-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --protocol=tcp --host=127.0.0.1 --user=root --password=ipam-ci-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
     steps:
       - name: Check out protected source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Prove secret-required image builds fail closed
+        run: |
+          set -euo pipefail
+          proof_root="$(mktemp -d "$RUNNER_TEMP/no-secret-builds.XXXXXX")"
+          cleanup() {
+            rm -rf -- "$proof_root"
+          }
+          trap cleanup EXIT
+
+          prove_missing_secret() {
+            local name="$1"
+            local dockerfile="$2"
+            local log_path="$proof_root/$name.log"
+            local status
+
+            set +e
+            timeout 10m docker buildx build \
+              --no-cache \
+              --platform linux/amd64 \
+              --build-arg "OCI_SOURCE=$OCI_IMAGE_SOURCE" \
+              --build-arg "OCI_REVISION=$OCI_IMAGE_REVISION" \
+              --progress=plain \
+              -f "$dockerfile" \
+              . >"$log_path" 2>&1
+            status=$?
+            set -e
+
+            if [[ "$status" -eq 0 ]]; then
+              printf 'SECRET_BUILD_PROOF_FAILED image=%s reason=build-succeeded\n' "$name" >&2
+              exit 1
+            fi
+            if [[ "$status" -eq 124 ]]; then
+              printf 'SECRET_BUILD_PROOF_FAILED image=%s reason=timeout\n' "$name" >&2
+              exit 1
+            fi
+            if ! grep -Eqi -- '(required secret|secret)[^[:cntrl:]]*heroui_token[^[:cntrl:]]*(missing|not found)' "$log_path"; then
+              printf 'SECRET_BUILD_PROOF_FAILED image=%s reason=unexpected-build-error\n' "$name" >&2
+              exit 1
+            fi
+            printf 'SECRET_BUILD_PROOF_OK image=%s\n' "$name"
+          }
+
+          prove_missing_secret ipam-frontend Dockerfile.frontend
+          prove_missing_secret ipam-combined Dockerfile
 
       - name: Build backend image without a package secret
-        run: docker buildx build -f Dockerfile.backend -t ipam-backend:qa --load .
+        run: >-
+          docker buildx build
+          --platform linux/amd64
+          --build-arg "OCI_SOURCE=$OCI_IMAGE_SOURCE"
+          --build-arg "OCI_REVISION=$OCI_IMAGE_REVISION"
+          -f Dockerfile.backend
+          -t "$IPAM_BACKEND_IMAGE"
+          --load .
 
       - name: Build frontend image with an ephemeral BuildKit secret
         env:
@@ -235,9 +363,12 @@ jobs:
             exit 2
           fi
           docker buildx build \
+            --platform linux/amd64 \
+            --build-arg "OCI_SOURCE=$OCI_IMAGE_SOURCE" \
+            --build-arg "OCI_REVISION=$OCI_IMAGE_REVISION" \
             --secret id=heroui_token,env=HEROUI_AUTH_TOKEN \
             -f Dockerfile.frontend \
-            -t ipam-frontend:qa \
+            -t "$IPAM_FRONTEND_IMAGE" \
             --load .
 
       - name: Build combined image with an ephemeral BuildKit secret
@@ -250,20 +381,78 @@ jobs:
             exit 2
           fi
           docker buildx build \
+            --platform linux/amd64 \
+            --build-arg "OCI_SOURCE=$OCI_IMAGE_SOURCE" \
+            --build-arg "OCI_REVISION=$OCI_IMAGE_REVISION" \
             --secret id=heroui_token,env=HEROUI_AUTH_TOKEN \
             -f Dockerfile \
-            -t ipam-combined:qa \
+            -t "$IPAM_COMBINED_IMAGE" \
             --load .
 
-      - name: Verify image map and scan image metadata
+      - name: Scan loaded images before publishing
         env:
           HEROUI_AUTH_TOKEN: ${{ secrets.HEROUI_AUTH_TOKEN }}
+          IMAGE_MAP_OUTPUT: ${{ runner.temp }}/local-image-manifest.json
           VERIFY_IMAGE_MAP_MODE: docker
           VERIFY_IMAGE_MAP_REQUIRE_SECRET_SCAN: '1'
-          IPAM_BACKEND_IMAGE: ipam-backend:qa
-          IPAM_FRONTEND_IMAGE: ipam-frontend:qa
-          IPAM_COMBINED_IMAGE: ipam-combined:qa
         run: bash scripts/verify-image-map.sh
+
+      - name: Grant release smoke database privileges
+        env:
+          MYSQL_PWD: ipam-ci-root-password
+        run: |
+          mysql --protocol=TCP --host=127.0.0.1 --user=root <<'SQL'
+          SET GLOBAL log_bin_trust_function_creators = 1;
+          GRANT SELECT, INSERT, UPDATE, DELETE, ALTER, INDEX, REFERENCES, CREATE VIEW, SHOW VIEW, TRIGGER
+            ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
+          GRANT CREATE, DROP ON `ipam\_%\_test`.* TO 'ipam_ci'@'%';
+          GRANT PROCESS ON *.* TO 'ipam_ci'@'%';
+          GRANT SELECT ON performance_schema.* TO 'ipam_ci'@'%';
+          FLUSH PRIVILEGES;
+          SQL
+
+      - name: Verify loaded image deployment contracts
+        env:
+          MYSQL_SERVICE_CONTAINER_ID: ${{ job.services.mysql.id }}
+        run: |
+          IPAM_BACKEND_IMAGE="$IPAM_BACKEND_IMAGE" \
+          IPAM_FRONTEND_IMAGE="$IPAM_FRONTEND_IMAGE" \
+          IPAM_COMBINED_IMAGE="$IPAM_COMBINED_IMAGE" \
+          TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            bash scripts/verify-deployment.sh all
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: true
+
+      - name: Push and bind immutable image digests
+        run: |
+          set -euo pipefail
+          bash scripts/capture-pushed-image-digests.sh \
+            "$RUNNER_TEMP/local-image-manifest.json" \
+            "$RUNNER_TEMP/pushed-image-bindings.json"
+          node scripts/release-manifest.mjs \
+            "$RUNNER_TEMP/local-image-manifest.json" \
+            "$RUNNER_TEMP/pushed-image-bindings.json" \
+            "$RUNNER_TEMP/release-evidence/image-manifest.json"
+
+      - name: Render immutable deployment configs
+        run: >-
+          node scripts/render-platform-configs.mjs
+          "$RUNNER_TEMP/release-evidence/image-manifest.json"
+          "$RUNNER_TEMP/release-evidence/platform-configs"
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/release-evidence
+          if-no-files-found: error
+          retention-days: 30
 
   github-protection:
     name: GitHub protection
@@ -279,7 +468,7 @@ jobs:
       deployments: read
     steps:
       - name: Check out protected source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
