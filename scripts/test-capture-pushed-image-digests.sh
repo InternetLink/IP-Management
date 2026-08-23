@@ -96,7 +96,8 @@ case "$command_name" in
     else
       digit="$((index + 3))"
       digest="$(repeat_digit "$digit")"
-      printf 'digest: sha256:%s size: 1234\n' "$digest"
+      tag="${reference##*:}"
+      printf '%s: digest: sha256:%s size: 1234\n' "$tag" "$digest"
     fi
     ;;
   pull)
