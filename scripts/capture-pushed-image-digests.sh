@@ -34,7 +34,7 @@ extract_push_digest() {
   node - "$push_log" <<'NODE'
 const fs = require('node:fs');
 const text = fs.readFileSync(process.argv[2], 'utf8');
-const matches = [...text.matchAll(/(?:^|\n)digest:\s*(sha256:[0-9a-f]{64})\s+size:\s*[0-9]+(?:\r?\n|$)/g)]
+const matches = [...text.matchAll(/(?:^|\n)(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}:\s+)?digest:\s*(sha256:[0-9a-f]{64})\s+size:\s*[0-9]+(?:\r?\n|$)/g)]
   .map(match => match[1]);
 const unique = [...new Set(matches)];
 if (unique.length !== 1) process.exit(1);
