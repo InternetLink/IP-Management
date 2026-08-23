@@ -3,8 +3,10 @@ set -euo pipefail
 
 umask 077
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+readonly ROOT_DIR
 readonly RELEASE_ENVIRONMENT='release'
 readonly REQUIRED_CHECK_NAME="${RELEASE_GATE_CHECK_NAME:-release-gate}"
 
@@ -184,6 +186,8 @@ api_call() {
 
   API_BODY_PATH["$key"]="$body_path"
   API_ETAG["$key"]="$(api_metadata_value "$metadata_path" etag)"
+  [[ "${API_ETAG[$key]}" =~ ^(W/)?\"[^\"[:cntrl:]]+\"$ ]] \
+    || environment_blocked "api-$key-etag-invalid"
   API_TIMESTAMP["$key"]="$query_timestamp"
 }
 
@@ -226,7 +230,11 @@ const commitSha = String(process.env.COMMIT_SHA || '').toLowerCase();
 const ref = process.env.REF_NAME || '';
 const defaultBranch = repository.default_branch;
 const requiredCheckName = process.env.REQUIRED_CHECK_NAME || 'release-gate';
+const requiredCheckWorkflowName = process.env.REQUIRED_CHECK_WORKFLOW_NAME || 'CI';
+const githubActionsAppId = 15368;
 const workflowPathName = process.env.WORKFLOW_PATH || '';
+const expectedRepositoryName = process.env.REPOSITORY_NAME || '';
+const API_KEYS = ['branch', 'commit', 'environment', 'protection', 'repository', 'workflow'];
 
 function required(value, name) {
   if (value === undefined || value === null || value === '') {
@@ -236,8 +244,16 @@ function required(value, name) {
   return value;
 }
 
-function booleanValue(value) {
-  return value === true;
+// Fail-closed presence check for policy booleans. A container object that the
+// protection API returned but whose field is absent or non-boolean means the
+// response was truncated or the token lacked scope, so the run is blocked
+// (exit 2) instead of silently defaulting the policy to a passing value.
+function requiredBoolean(value, name) {
+  if (typeof value !== 'boolean') {
+    process.stderr.write(`missing-${name}\n`);
+    process.exit(2);
+  }
+  return value;
 }
 
 function uniqueSorted(values) {
@@ -252,6 +268,18 @@ const resolvedCommitSha = String(required(commit.sha, 'commit-sha')).toLowerCase
 const workflowSha = String(required(workflow.sha, 'workflow-sha')).toLowerCase();
 const workflowApiPath = required(workflow.path, 'workflow-path');
 const branchProtectedValue = required(branch.protected, 'branch-protected');
+if (typeof repositoryName !== 'string' || repositoryName !== expectedRepositoryName) {
+  process.stderr.write('invalid-repository-name\n');
+  process.exit(2);
+}
+if (typeof branchName !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(branchName)) {
+  process.stderr.write('invalid-default-branch\n');
+  process.exit(2);
+}
+if (typeof workflowApiPath !== 'string' || typeof environment.name !== 'string') {
+  process.stderr.write('invalid-identity-field-type\n');
+  process.exit(2);
+}
 if (!Number.isSafeInteger(Number(repositoryId)) || Number(repositoryId) < 1) {
   process.stderr.write('invalid-repository-id\n');
   process.exit(2);
@@ -269,16 +297,61 @@ if (!/^[0-9a-f]{40}$/.test(workflowSha)) {
   process.exit(2);
 }
 const protectionRules = protection.required_status_checks;
+if (protectionRules !== null && protectionRules !== undefined) {
+  if (typeof protectionRules !== 'object' || Array.isArray(protectionRules)) {
+    process.stderr.write('invalid-required-status-checks\n');
+    process.exit(2);
+  }
+  if (protectionRules.contexts !== undefined && !Array.isArray(protectionRules.contexts)) {
+    process.stderr.write('invalid-required-status-contexts\n');
+    process.exit(2);
+  }
+  if (protectionRules.checks !== undefined && !Array.isArray(protectionRules.checks)) {
+    process.stderr.write('invalid-required-status-checks-list\n');
+    process.exit(2);
+  }
+}
 const requiredChecks = uniqueSorted([
   ...(Array.isArray(protectionRules?.contexts) ? protectionRules.contexts : []),
   ...(Array.isArray(protectionRules?.checks) ? protectionRules.checks.map(check => check?.context) : []),
 ]);
-const reviewCount = Number(protection.required_pull_request_reviews?.required_approving_review_count ?? 0);
-const enforceAdmins = booleanValue(protection.enforce_admins?.enabled);
-const branchProtected = booleanValue(branchProtectedValue);
+const requiredCheckEntries = Array.isArray(protectionRules?.checks) ? protectionRules.checks : [];
+if (requiredCheckEntries.some(check => typeof check?.context !== 'string'
+  || !Number.isSafeInteger(check?.app_id))) {
+  process.stderr.write('invalid-required-check-entry\n');
+  process.exit(2);
+}
+const reviewRules = protection.required_pull_request_reviews;
+if (reviewRules !== null && reviewRules !== undefined
+  && (!Number.isInteger(reviewRules.required_approving_review_count)
+    || reviewRules.required_approving_review_count < 0)) {
+  process.stderr.write('invalid-required-review-count\n');
+  process.exit(2);
+}
+const reviewCount = reviewRules?.required_approving_review_count ?? 0;
+const enforceAdmins = requiredBoolean(protection.enforce_admins?.enabled, 'enforce-admins');
+const branchProtected = requiredBoolean(branchProtectedValue, 'branch-protected');
 const requiredStatusChecks = protectionRules !== null && protectionRules !== undefined;
-const requiredPullRequestReviews = protection.required_pull_request_reviews !== null
-  && protection.required_pull_request_reviews !== undefined;
+const requiredPullRequestReviews = reviewRules !== null && reviewRules !== undefined;
+
+// allow_force_pushes / allow_deletions are always present for a protected
+// branch, so their absence is an incomplete API state rather than a policy
+// mismatch. Both source fields are negative; evidence stores the positive form.
+const forcePushDisabled = !requiredBoolean(protection.allow_force_pushes?.enabled, 'allow-force-pushes');
+const branchDeletionDisabled = !requiredBoolean(protection.allow_deletions?.enabled, 'allow-deletions');
+
+// When the parent rule object is missing entirely the branch simply has no such
+// rule configured: record false and let the verdict fail as a mismatch. When the
+// parent object is present the nested field must be a real boolean.
+const strictStatusChecks = requiredStatusChecks
+  ? requiredBoolean(protectionRules?.strict, 'required-status-checks-strict')
+  : false;
+const dismissStaleReviews = requiredPullRequestReviews
+  ? requiredBoolean(reviewRules?.dismiss_stale_reviews, 'dismiss-stale-reviews')
+  : false;
+const requireLastPushApproval = requiredPullRequestReviews
+  ? requiredBoolean(reviewRules?.require_last_push_approval, 'require-last-push-approval')
+  : false;
 
 const protectionRulesList = Array.isArray(environment.protection_rules) ? environment.protection_rules : [];
 const reviewerRuleIds = protectionRulesList
@@ -297,18 +370,24 @@ const environmentHasReviewers = reviewerIds.length > 0;
 const refMatchesDefaultBranch = ref === `refs/heads/${branchName}`;
 const currentCommitMatches = resolvedCommitSha === commitSha && branchHeadSha === commitSha;
 const workflowPathMatches = workflowApiPath === workflowPathName;
-const requiredCheckPresent = requiredChecks.some(check => {
-  const normalized = check.toLowerCase();
-  const expected = requiredCheckName.toLowerCase();
-  return normalized === expected || normalized.endsWith(` / ${expected}`);
-});
+const acceptedCheckNames = new Set([
+  requiredCheckName.toLowerCase(),
+  `${requiredCheckWorkflowName} / ${requiredCheckName}`.toLowerCase(),
+]);
+const requiredCheckPresent = requiredCheckEntries.some(check =>
+  acceptedCheckNames.has(check.context.toLowerCase()) && check.app_id === githubActionsAppId);
 
 const ruleBooleans = {
   branchProtected,
   enforceAdmins,
   requiredStatusChecks,
+  strictStatusChecks,
   requiredPullRequestReviews,
   requiredCheckPresent,
+  dismissStaleReviews,
+  requireLastPushApproval,
+  forcePushDisabled,
+  branchDeletionDisabled,
   requiredEnvironmentReviewers: environmentHasReviewers,
   refMatchesDefaultBranch,
   currentCommitMatches,
@@ -317,7 +396,31 @@ const ruleBooleans = {
 const matched = Object.values(ruleBooleans).every(Boolean) && reviewCount >= 1;
 const queryTimestamps = JSON.parse(process.env.QUERY_TIMESTAMPS_JSON || '{}');
 const apiEtags = JSON.parse(process.env.API_ETAGS_JSON || '{}');
-const timestampValues = Object.values(queryTimestamps).filter(Boolean).sort();
+function exactApiKeys(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(API_KEYS);
+}
+if (!exactApiKeys(queryTimestamps) || !exactApiKeys(apiEtags)) {
+  process.stderr.write('invalid-api-metadata-keys\n');
+  process.exit(2);
+}
+const timestampValues = API_KEYS.map(key => queryTimestamps[key]);
+const timestampMillis = timestampValues.map(value => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) return NaN;
+  return Date.parse(value);
+});
+if (timestampMillis.some(value => !Number.isFinite(value))
+  || timestampMillis.some(value => Math.abs(Date.now() - value) > 300_000)
+  || Math.max(...timestampMillis) - Math.min(...timestampMillis) > 60_000) {
+  process.stderr.write('stale-api-metadata\n');
+  process.exit(2);
+}
+if (API_KEYS.some(key => typeof apiEtags[key] !== 'string'
+  || !/^(W\/)?"[^"\u0000-\u001f\u007f]+"$/.test(apiEtags[key]))) {
+  process.stderr.write('invalid-api-etag\n');
+  process.exit(2);
+}
+timestampValues.sort();
 
 function sortObject(value) {
   if (Array.isArray(value)) return value.map(sortObject);
@@ -328,7 +431,7 @@ function sortObject(value) {
 }
 
 const evidence = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   repositoryId: Number(repositoryId),
   repositoryName,
   ref,
@@ -501,7 +604,9 @@ main() {
     "COMMIT_SHA=$COMMIT_SHA" \
     "REF_NAME=$REF_NAME" \
     "REQUIRED_CHECK_NAME=$REQUIRED_CHECK_NAME" \
+    "REQUIRED_CHECK_WORKFLOW_NAME=CI" \
     "WORKFLOW_PATH=$WORKFLOW_PATH" \
+    "REPOSITORY_NAME=$REPOSITORY" \
     "API_ETAGS_JSON=$etags_json" \
     "QUERY_TIMESTAMPS_JSON=$timestamps_json" \
     node "$TEMP_DIR/build-evidence.cjs" \
