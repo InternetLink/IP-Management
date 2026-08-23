@@ -4,6 +4,7 @@ import type {NavItem} from "../nav-items";
 
 import {Chip} from "@heroui/react";
 import {Sidebar} from "@heroui-pro/react";
+import {Heading} from "react-aria-components";
 
 import {useI18n} from "../i18n";
 import {FOOTER_ITEMS, NAV_ITEMS} from "../nav-items";
@@ -14,12 +15,23 @@ interface DashboardSidebarProps {
 }
 
 export function DashboardSidebar({basePath, pathname}: DashboardSidebarProps) {
+  const {t} = useI18n();
+
   return (
     <>
       <Sidebar>
         <SidebarContents basePath={basePath} pathname={pathname} />
       </Sidebar>
       <Sidebar.Mobile>
+        {/*
+          Sidebar.Mobile forwards its rest props to an inner div, not to the
+          Sheet dialog that actually carries role="dialog", so an aria-label
+          passed here would never name the drawer. React Aria resolves a
+          dialog's aria-labelledby through its title slot, so a heading with
+          slot="title" is what supplies the accessible name. It is visually
+          hidden because the drawer already shows the product header.
+        */}
+        <Heading className="sr-only" slot="title">{t.nav.navigationMenu}</Heading>
         <SidebarContents basePath={basePath} idPrefix="mobile-" pathname={pathname} />
       </Sidebar.Mobile>
     </>

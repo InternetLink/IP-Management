@@ -38,6 +38,15 @@ export interface DialogProps {
  * behaviour: portal + focus scope with `contain` and `restoreFocus`, initial
  * focus on the dialog, Escape-to-close, `usePreventScroll` scroll lock, and
  * `aria-labelledby` wiring from `Modal.Heading` (rendered with `slot="title"`).
+ *
+ * `aria-modal` is applied through the react-aria-components `render` prop rather
+ * than as a plain attribute: `Dialog` funnels incoming props through
+ * `filterDOMProps`, whose allowlist covers only the labelling ARIA attributes, so
+ * a pass-through `aria-modal` never reaches the DOM. React Aria omits the
+ * attribute by default because of a Safari-inside-iframe focus bug and relies on
+ * `ariaHideOutside` alone. This app never renders the dialog inside an iframe, so
+ * declaring the modal relationship explicitly is safe and gives assistive
+ * technology both signals.
  */
 export function Dialog({
   children,
@@ -56,7 +65,14 @@ export function Dialog({
       }}
     >
       <Modal.Container size={size}>
-        <Modal.Dialog>
+        <Modal.Dialog
+          render={(dialogDomProps) => (
+            // `role` is declared ahead of the spread purely so static a11y tooling
+            // can resolve it; react-aria's own `role` inside `dialogDomProps` still
+            // wins at runtime.
+            <section role="dialog" {...dialogDomProps} aria-modal="true" />
+          )}
+        >
           <Modal.Header>
             <Modal.Heading>{title}</Modal.Heading>
             {descriptionText ? <p className="text-muted text-sm">{descriptionText}</p> : null}
