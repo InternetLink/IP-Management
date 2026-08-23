@@ -103,6 +103,9 @@ jobs:
       - name: Run private npm userconfig fixtures
         run: bash scripts/test-npm-ci-private.sh
 
+      - name: Run final artifact hash fixtures
+        run: bash scripts/test-verify-final-artifact-hash.sh
+
       - name: Check release shell scripts
         run: >-
           shellcheck -S warning
@@ -117,6 +120,7 @@ jobs:
           scripts/verify-github-protection.sh
           scripts/test-github-protection-policy.sh
           scripts/test-platform-config-renderer.sh
+          scripts/test-verify-final-artifact-hash.sh
           scripts/test-verify-deployment-all.sh
           scripts/fixtures/verify-deployment-all/docker
           scripts/fixtures/verify-deployment-all/curl
