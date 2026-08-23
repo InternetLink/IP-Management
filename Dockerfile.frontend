@@ -23,6 +23,9 @@ FROM node:20-bookworm-slim AS runtime
 
 WORKDIR /app
 
+ARG OCI_SOURCE=https://github.com/internetlink/ipam-Management
+ARG OCI_REVISION=unknown
+
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
@@ -35,7 +38,9 @@ LABEL io.ipam.image.name="ipam-frontend" \
       io.ipam.image.secret-required="true" \
       io.ipam.image.entrypoint="node server.js" \
       io.ipam.image.ports="8080" \
-      io.ipam.image.runtime-uid="1000"
+      io.ipam.image.runtime-uid="1000" \
+      org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static

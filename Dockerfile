@@ -51,6 +51,9 @@ FROM node:20-bookworm-slim AS runtime
 
 WORKDIR /app
 
+ARG OCI_SOURCE=https://github.com/internetlink/ipam-Management
+ARG OCI_REVISION=unknown
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
@@ -69,7 +72,9 @@ LABEL io.ipam.image.name="ipam-combined" \
       io.ipam.image.secret-required="true" \
       io.ipam.image.entrypoint="sh /app/scripts/start-combined.sh" \
       io.ipam.image.ports="public=3003,backend=3001" \
-      io.ipam.image.runtime-uid="1000"
+      io.ipam.image.runtime-uid="1000" \
+      org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 
 COPY --from=backend-production-deps --chown=node:node /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder --chown=node:node /app/backend/dist ./backend/dist
