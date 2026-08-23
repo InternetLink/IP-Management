@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${FAKE_STATE:?}"
+url="${!#}"
+status=""
+case "${FAKE_CURL_MODE:-success}" in
+  success|mysql-outage)
+    if [[ -f "$state/mysql.stopped" && "$url" == */api/health/ready ]]; then
+      status='503'
+    else
+      status='200'
+    fi
+    ;;
+  mysql-outage-transition)
+    if [[ -f "$state/mysql.stopped" && "$url" == */api/health/ready ]]; then
+      if [[ -f "$state/readiness.transitioned" ]]; then
+        status='503'
+      else
+        : > "$state/readiness.transitioned"
+        status='200'
+      fi
+    else
+      status='200'
+    fi
+    ;;
+  mysql-outage-never-ready) status='200' ;;
+  fail) status='503' ;;
+  block)
+    : > "$state/curl.blocked"
+    sleep 2
+    status='503'
+    ;;
+  *) exit 96 ;;
+esac
+printf '%s status=%s\n' "$url" "$status" >> "$state/curl.calls"
+printf 'CURL status=%s url=%s\n' "$status" "$url" >> "$state/events"
+printf '%s' "$status"

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${FAKE_STATE:?}"
+readonly mysql_service_id="${FAKE_MYSQL_SERVICE_CONTAINER_ID:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
+command_name="${1:-}"
+shift || true
+
+case "$command_name" in
+  info)
+    if [[ "${FAKE_DOCKER_MODE:-success}" == "daemon-fail" ]]; then exit 1; fi
+    ;;
+  image)
+    [[ "${1:-}" == "inspect" ]] || exit 90
+    ;;
+  run)
+    name=""
+    label=""
+    network=""
+    env_file=""
+    while (($# > 0)); do
+      case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --label)
+          if [[ "$2" == io.ipam.verify.run=* ]]; then label="$2"; fi
+          shift 2
+          ;;
+        --network) network="$2"; shift 2 ;;
+        --env-file) env_file="$2"; shift 2 ;;
+        --detach) shift ;;
+        --*) exit 91 ;;
+        *) image="$1"; shift ;;
+      esac
+    done
+    [[ -n "$name" && -n "$label" && "$network" == "host" && -f "$env_file" && -n "${image:-}" ]] || exit 92
+    cp -- "$env_file" "$state/$name.env"
+    printf '%s\n' "${label#io.ipam.verify.run=}" > "$state/$name.label"
+    printf 'RUN name=%s network=%s image=%s' "$name" "$network" "$image" >> "$state/docker.calls"
+    printf 'RUN component=%s\n' "${name##*-}" >> "$state/events"
+    declare -A seen_keys=()
+    while IFS='=' read -r key value; do
+      [[ -z "${seen_keys[$key]:-}" ]] || exit 97
+      seen_keys[$key]=1
+      case "$key" in
+        DATABASE_URL|AUTH_SECRET) printf ' %s=<protected>' "$key" >> "$state/docker.calls" ;;
+        PORT|BACKEND_PORT|BOOTSTRAP_DISABLED|APP_ORIGIN|API_PROXY_TARGET)
+          printf ' %s=%s' "$key" "$value" >> "$state/docker.calls"
+          ;;
+      esac
+    done < "$env_file"
+    printf '\n' >> "$state/docker.calls"
+    printf 'fake-%s\n' "$name"
+    ;;
+  container)
+    subcommand="${1:-}"
+    shift || true
+    case "$subcommand" in
+      inspect)
+        format=""
+        if [[ "${1:-}" == "--format" ]]; then format="$2"; shift 2; fi
+        name="${1:-}"
+        if [[ "${FAKE_DOCKER_MODE:-success}" == "inspect-fail" && "$name" == *-frontend ]]; then
+          printf 'Error response from daemon: fixture inspect failure\n' >&2
+          exit 1
+        fi
+        if [[ "$format" == *Config.Image* && "$name" == "$mysql_service_id" ]]; then
+          if [[ "${FAKE_DOCKER_MODE:-success}" == "mysql-invalid-container" ]]; then
+            printf 'postgres:16 true\n'
+          elif [[ "${FAKE_DOCKER_MODE:-success}" == "mysql-stopped" ]]; then
+            printf 'mysql:8 false\n'
+          else
+            printf 'mysql:8 true\n'
+          fi
+          exit 0
+        fi
+        if [[ ! -f "$state/$name.label" ]]; then
+          printf 'Error response from daemon: No such container: %s\n' "$name" >&2
+          exit 1
+        fi
+        case "$format" in
+          *Config.Labels*)
+            if [[ "${FAKE_DOCKER_MODE:-success}" == "label-mismatch" && "$name" == *-frontend ]]; then
+              printf 'different-run-id\n'
+            else
+              cat "$state/$name.label"
+            fi
+            ;;
+          *State.Running*) printf 'true\n' ;;
+          *) exit 93 ;;
+        esac
+        ;;
+      rm)
+        [[ "${1:-}" == "--force" ]] && shift
+        name="${1:-}"
+        if [[ "${FAKE_DOCKER_MODE:-success}" == "rm-fail" && "$name" == *-frontend ]]; then
+          exit 1
+        fi
+        rm -f -- "$state/$name.label" "$state/$name.env"
+        printf 'RM name=%s\n' "$name" >> "$state/docker.calls"
+        ;;
+      stop)
+        name="${1:-}"
+        [[ "$name" == "$mysql_service_id" ]] || exit 98
+        [[ "${FAKE_DOCKER_MODE:-success}" != "mysql-stop-fail" ]] || exit 1
+        : > "$state/mysql.stopped"
+        printf 'STOP component=mysql-service\n' >> "$state/docker.calls"
+        printf 'STOP component=mysql-service\n' >> "$state/events"
+        ;;
+      *) exit 94 ;;
+    esac
+    ;;
+  logs)
+    name="${!#}"
+    [[ -f "$state/$name.env" ]] || exit 1
+    database_url="$(grep '^DATABASE_URL=' "$state/$name.env" | cut -d= -f2-)"
+    auth_secret="$(grep '^AUTH_SECRET=' "$state/$name.env" | cut -d= -f2-)"
+    printf 'fake failure DATABASE_URL=%s AUTH_SECRET=%s\n' "$database_url" "$auth_secret"
+    ;;
+  *) exit 95 ;;
+esac
