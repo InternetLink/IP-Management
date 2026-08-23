@@ -25,6 +25,7 @@ const zhTW: TranslationKeys = {
     view: '查看詳情',
     select: '選擇',
     confirmDelete: '確認刪除',
+    language: '語言',
   },
   nav: {
     dashboard: '儀表板',
@@ -35,6 +36,7 @@ const zhTW: TranslationKeys = {
     settings: '系統設定',
     help: '幫助與資訊',
     logout: '登出',
+    navigationMenu: '導覽選單',
   },
   dashboard: {
     title: 'IP 位址管理',
@@ -57,6 +59,12 @@ const zhTW: TranslationKeys = {
     warnings: '警告',
     healthy: '健康',
     high: '偏高',
+    noTrendData: '尚無活動紀錄',
+    noTrendDataHint: '新增前綴後即可開始累積活動趨勢。',
+    noRirData: '尚無 RIR 分佈資料',
+    noRirDataHint: '為根前綴指定 RIR 後即可查看空間分佈。',
+    noRecentActivity: '尚無近期活動',
+    noRecentActivityHint: '前綴、IP 分配與 Geofeed 條目的變更會顯示在這裡。',
   },
   prefixes: {
     subtitle: '以樹狀層級管理你的所有 IP 位址空間。',
