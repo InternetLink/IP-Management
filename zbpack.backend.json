@@ -1,8 +1,0 @@
-{
-  "app_dir": "backend",
-  "build_command": "npm run build",
-  "start_command": "sh scripts/start-prod.sh",
-  "dockerfile": {
-    "name": "backend"
-  }
-}
