@@ -1,7 +1,5 @@
 # IPAM / Geofeed 管理系统
 
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/C5WQBY)
-
 这是一个全栈 IP 地址管理系统，支持层级化 CIDR 前缀管理、IPv4 地址池操作、RFC 8805 Geofeed 管理、审计日志和基础系统设置。
 
 ## 核心能力
@@ -48,6 +46,8 @@ ipam/
     ├── ci-local.sh             # 本地完整 CI 门禁
     ├── verify-image-map.sh     # Docker 镜像清单校验
     ├── verify-deployment.sh    # 部署配置合规校验
+    ├── render-platform-configs.mjs # 从发布清单生成平台配置
+    ├── test-platform-config-renderer.sh # 平台配置离线回归夹具
     ├── verify-github-protection.sh  # GitHub 分支保护证据收集
     └── install-actionlint.sh   # actionlint 安装
 ```
@@ -62,8 +62,8 @@ ipam/
 
 ## 环境要求
 
-- Node.js 20+ 或 22+
-- npm
+- Node.js `>=20.9 <21`（前后端、本地 CI 与镜像构建统一使用 Node 20）
+- npm 10.x
 - MySQL 或兼容 MySQL 的数据库（MariaDB 亦可）
 
 ## 环境变量
@@ -82,10 +82,10 @@ DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
 PORT=3001
 CORS_ORIGINS="http://localhost:3003"
 AUTH_SECRET="change-this-to-at-least-32-random-characters"
-AUTH_TOKEN_TTL_DAYS=30
+AUTH_TOKEN_TTL_HOURS=720
 ```
 
-`AUTH_TOKEN_TTL_DAYS` 控制登录 Token 有效天数（默认 30 天）。如未设置，后端会尝试读取兼容变量 `AUTH_TOKEN_TTL_HOURS`（默认 720 小时 = 30 天）。推荐使用 `AUTH_TOKEN_TTL_DAYS`。
+`AUTH_TOKEN_TTL_HOURS` 控制登录 Token 有效时长，默认值为 `720`（30 天）。兼容变量 `AUTH_TOKEN_TTL_DAYS` 设置为正数时优先于小时值；新部署统一使用小时值，便于表达短于一天的有效期。
 
 前端环境变量：
 
@@ -114,7 +114,7 @@ npm run auth:bootstrap
 3. 命令成功后打印 `Bootstrap completed.`。如果已经创建过管理员，会打印 `Bootstrap already completed; no action taken.` 并正常退出。
 4. 创建成功后建议设置 `BOOTSTRAP_DISABLED=true` 永久禁用该入口。
 
-**浏览器端行为**：当数据库尚无用户时，登录页显示一条提示信息，引导运维人员在服务器上执行 `npm run auth:bootstrap`。页面每 5 秒轮询一次后端状态，发现管理员创建完成后自动切换到正常登录表单。也可点击"Check again"手动刷新。
+管理员初始化只由受信任的运维终端执行。Web 登录页不会接收 bootstrap token 或管理员初始密码。
 
 ## 认证架构
 
@@ -165,7 +165,7 @@ npm run test:integration    # 需要 TEST_DATABASE_URL 指向一个可写的测�
 
 ```bash
 cd frontend
-npm install
+HEROUI_AUTH_TOKEN="your-token" bash ../scripts/npm-ci-private.sh .
 npm run dev
 ```
 
@@ -188,12 +188,10 @@ http://localhost:3003
 本地开发传入方式：
 
 ```bash
-HEROUI_AUTH_TOKEN="your-token" npm ci
+HEROUI_AUTH_TOKEN="your-token" bash ../scripts/npm-ci-private.sh .
 ```
 
-CI/CD 构建时，此 Token 通过受保护的 GitHub Actions `release` Environment secret 注入 BuildKit secret mount（`--mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true`），仅在 `npm ci` 步骤存在，不进入镜像层。
-
-> **当前状态**：Todo 1（HeroUI Pro 可复现安装）仍部分受阻——仓库所有者需提供 `HEROUI_AUTH_TOKEN` 才能完成前端 build/typecheck。后端和前端 lint/unit-test 不受此影响。
+`npm ci` 从 npmjs 包仓库下载其余依赖，HeroUI 授权包会在安装期间的 licensed postinstall 阶段读取 `HEROUI_AUTH_TOKEN`。本地 CI 与 GitHub 私有依赖安装都通过 `scripts/npm-ci-private.sh` 创建 mode `0600` 的临时 `NPM_CONFIG_USERCONFIG`；该文件刻意保持为空，用来隔离用户级 npm 配置。令牌只进入 `npm ci` 进程，trap 在成功、失败和信号退出时清理文件。镜像构建通过受保护的 GitHub Actions `release` Environment secret 注入 BuildKit secret mount（`--mount=type=secret,id=heroui_token,env=HEROUI_AUTH_TOKEN,required=true`）。
 
 常用命令：
 
@@ -205,7 +203,7 @@ npm run build
 
 ## 自动部署：Railway / Zeabur
 
-本项目是 monorepo。CI 通过 GitHub Actions 构建不可变 Docker 镜像，部署平台消费构建产物。
+受保护的 `main` 发布任务只有在 public、private、MySQL integration 和 GitHub protection 四个前置作业全部成功后才会构建并推送镜像。每次 push 的摘要直接取自对应 `docker push` 成功输出，再拉取 `repository@sha256:...` 并比较推送前后的镜像 ID；提交 SHA 标签只承担推送入口，制品仅记录已绑定的不可变 GHCR digest。三张镜像还携带 `org.opencontainers.image.source` 与 `org.opencontainers.image.revision` 标签。
 
 ### 镜像清单
 
@@ -215,88 +213,60 @@ npm run build
 | `ipam-frontend` | `Dockerfile.frontend` | 8080 | `node server.js` | BuildKit secret mount |
 | `ipam-combined` | `Dockerfile` | 3003(公开) + 3001(内部) | `sh /app/scripts/start-combined.sh` | BuildKit secret mount |
 
-所有镜像均为多阶段构建、非 root 运行（UID 1000）、仅含生产依赖。后端启动时通过 `scripts/start-prod.sh` 自动执行 `npm run db:deploy`。
+所有镜像均为多阶段构建、非 root 运行（UID 1000）、仅含生产依赖。后端启动时通过 `scripts/start-prod.sh` 自动执行 `npm run db:deploy`。受保护发布任务在推送前使用真实 MySQL 8 运行 `scripts/verify-deployment.sh all`，验证 backend 的 live/ready、frontend 页面与 BFF、combined 页面与公开 ready 路径，并在每条路径结束时清理容器。
 
-### Zeabur 部署
+### 下载发布制品
 
-推荐使用根目录 `zeabur.yaml` 一键部署模板，自动创建 `mysql`、`backend`、`frontend` 三个服务：
+1. 在目标提交的成功 CI run 中下载 `release-evidence-<commit-sha>` artifact。也可使用 GitHub CLI：
 
 ```bash
-npx zeabur@latest template deploy -f zeabur.yaml
+gh run download RUN_ID --name release-evidence-COMMIT_SHA --dir release-evidence
 ```
 
-Backend / Frontend 都从仓库根目录构建（不需要手动选目录），模板内已内联 Dockerfile 内容。
+2. 检查制品：
 
-Backend 环境变量：
+- `image-manifest.json`：schemaVersion 1、`canonical-tar-v1` 算法和三条严格拓扑记录；每条记录包含本地镜像 ID、Dockerfile/build-context SHA、secret 标志、入口、端口、UID、`linux/amd64` 平台和唯一 registry digest。
+- `platform-configs/railway.ts`：Railway IaC，`source: image("...@sha256:...")` 指向 combined 镜像。
+- `platform-configs/zeabur.yaml`：两个 `PREBUILT_V2` 服务，`spec.source.image` 分别指向 backend 与 frontend 镜像。
 
-```env
-DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
-CORS_ORIGINS="https://你的前端域名"
-AUTH_SECRET="生成一个足够长的随机字符串"
-AUTH_TOKEN_TTL_DAYS=30
-```
+清单通过同目录临时文件原子提交；两个平台配置先写入同目录临时目录，完整校验后整体重命名。Artifact 保留 30 天。发布记录应在保留期内保存提交 SHA 和三条不可变 digest；artifact 过期后，从该受保护提交重新运行 `CI` 工作流，并逐条核对新制品 digest 与发布记录。任何 digest 差异都需要作为新构建重新审批和部署。
 
-Frontend 环境变量：
-
-```env
-NEXT_PUBLIC_API_URL="/api"
-API_PROXY_TARGET="http://${BACKEND_HOST}:8080"
-APP_ORIGIN="https://你的前端域名"
-```
-
-HeroUI Token 通过 BuildKit secret mount 传入构建阶段。当前 Zeabur 模板已内联 `--mount=type=secret` 指令；如果 Zeabur 平台本身不支持 BuildKit secret 注入，则需要通过 GitHub Actions CI 预构建镜像后推送到容器注册表，再让 Zeabur 拉取镜像。
-
-部署完成后在服务器上执行 `npm run auth:bootstrap` 创建第一个管理员账号（或通过 CI 自动化该步骤）。
-
-注意：在 Zeabur 里普通导入 GitHub 仓库通常只会创建一个服务。要自动创建三服务，必须走模板部署。
+仓库只保存渲染器，不保存某次发布的 digest，也不保存 Railway、Zeabur 或 zbpack 的 Git 源构建配置。`railway.json`、`zeabur.yaml`、`zbpack.backend.json` 和 `backend/zbpack.json` 的重新出现会使公共 CI 失败。切换到镜像部署前，运维人员需在 Railway 与 Zeabur 控制台断开或退役现有 Git-source/template 集成，避免平台继续从分支触发源码构建；该步骤属于外部平台操作，本仓库脚本只提供验证与交接说明。
 
 ### Railway 部署
 
-Railway 不支持用一个配置文件自动创建多服务。有两种方案：
+Railway CLI 只识别放在 **`.railway/railway.ts`**（相对于执行 `railway` 命令的目录）的 IaC 文件，需要把制品中的 `railway.ts` 移动/重命名到该路径，再执行：
 
-**方案一：分离服务（推荐）**
-
-同一仓库根目录创建两个服务并指定 Dockerfile：
-- Backend 服务：`Dockerfile.backend`
-- Frontend 服务：`Dockerfile.frontend`
-
-Backend 环境变量：
-
-```env
-DATABASE_URL="你的 Railway MySQL 连接串"
-CORS_ORIGINS="https://你的前端域名"
-AUTH_SECRET="生成一个足够长的随机字符串"
-AUTH_TOKEN_TTL_DAYS=30
+```bash
+mkdir -p .railway && mv platform-configs/railway.ts .railway/railway.ts
+railway login              # 首次使用需要交互登录
+railway link                # 关联到目标 Railway 项目
+railway config plan         # 从 .railway/railway.ts 预览资源变更
+railway config apply        # 应用 .railway/railway.ts
 ```
 
-Frontend 环境变量：
+该文件仅包含不可变镜像引用和就绪检查；在 Railway 服务设置中另外配置：
 
 ```env
+DATABASE_URL="mysql://USER:PASSWORD@HOST:PORT/DATABASE"
+AUTH_SECRET="生成一个至少 32 字符的随机字符串"
+AUTH_TOKEN_TTL_HOURS=720
 NEXT_PUBLIC_API_URL="/api"
-API_PROXY_TARGET="https://你的后端域名"
-APP_ORIGIN="https://你的前端域名"
 ```
 
-如果平台没有直接提供 `DATABASE_URL`，后端启动脚本也会自动尝试读取 `MYSQL_CONNECTION_STRING`、`MYSQL_URI`、`MYSQL_URL`、`MYSQL_HOST` / `MYSQL_USERNAME` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` 或 Railway 风格的 `MYSQLHOST` / `MYSQLUSER` / `MYSQLPASSWORD` / `MYSQLDATABASE`。
+GHCR 包为私有时，在 Railway 的 **Registry Credentials** 中配置具有 `read:packages` 权限的拉取凭据。数据库使用托管或外部 MySQL 8；IaC 不创建可变的数据库镜像。
 
-**方案二：单应用兜底（combined 镜像）**
+> Railway 官方已将 `railway.json`/`railway.toml` 这类仓库内 Config-as-Code 标记为 deprecated，计划于 2026-12-01 停止读取，因此本仓库不再保留该文件，与平台演进方向一致。IaC DSL（`railway/iac`）目前仍是 experimental 特性，字段可能变化。
 
-使用根目录 `Dockerfile` + `railway.json`，同一容器内运行前后端。
+### Zeabur 部署
 
-```env
-DATABASE_URL="你的 Railway MySQL 连接串"
-NEXT_PUBLIC_API_URL="/api"
-AUTH_SECRET="生成一个足够长的随机字符串"
-AUTH_TOKEN_TTL_DAYS=30
-```
+先在 Zeabur 控制台断开或退役当前仓库关联的 Git-source 集成/template，再使用制品中的 `platform-configs/zeabur.yaml` 创建 backend/frontend 两个 `PREBUILT_V2` 服务。模板要求外部 MySQL 8 `DATABASE_URL`、前后端域名和 `AUTH_SECRET`，并将 Token TTL 固定为 720 小时默认值。
 
-Railway 会注入 `PORT`，前端监听该端口；后端在容器内部使用 `BACKEND_PORT=3001`。
-
-两种方案的 HeroUI Token 都通过 CI 预构建镜像阶段的 BuildKit secret 传入，部署平台本身不接触该 Token。
+> Zeabur `PREBUILT_V2` 私有镜像凭据通过每个服务 `spec.source.username` / `spec.source.password` 提供。本仓库生成的 artifact 省略这两个字段。运维人员应在仓库和 artifact 目录之外创建权限为 `0600` 的临时副本，在 backend 与 frontend 的 `spec.source` 下分别加入 GHCR 用户名和仅具备 `read:packages` 的 token，通过受控 Zeabur operator/UI 通道导入，然后删除临时副本并轮换一次性 token。公开 GHCR package 可以直接导入原始 artifact。制品始终保持无 registry、HeroUI 和 npm 凭据。
 
 ### 部署后数据库初始化
 
-后端启动时自动运行 `prisma migrate deploy`。首次部署完成后需通过 CLI 或 CI 运行 `npm run auth:bootstrap` 创建管理员。
+后端启动时自动运行 `prisma migrate deploy`。首次部署完成后，从受信任的运维终端进入后端运行环境执行 `npm run auth:bootstrap` 创建管理员。
 
 ## 主要 API
 
@@ -364,6 +334,8 @@ Railway 会注入 `PORT`，前端监听该端口；后端在容器内部使用 `
 
 当前已验证命令（在本开发沙箱中实际执行过的）：
 
+前端执行 `npm ci` 时需要通过环境变量提供受保护的 `HEROUI_AUTH_TOKEN`；依赖安装完成后，typecheck 与生产构建可直接运行。
+
 ```bash
 # 后端
 cd backend && npm test                   # 单元测试
@@ -374,12 +346,19 @@ cd backend && npm run test:integration   # 集成测试（需 TEST_DATABASE_URL�
 # 前端
 cd frontend && npm test                  # Vitest 单元测试
 cd frontend && npm run lint              # ESLint
-# cd frontend && npm run typecheck       # 需要 HEROUI_AUTH_TOKEN（当前受阻）
-# cd frontend && npm run build           # 需要 HEROUI_AUTH_TOKEN（当前受阻）
+cd frontend && npm run typecheck         # TypeScript 类型检查
+cd frontend && npm run build             # 生产构建
 
 # 运维脚本
-bash scripts/verify-image-map.sh         # 镜像清单校验（static 或 Docker 模式）
+VERIFY_IMAGE_MAP_MODE=static bash scripts/verify-image-map.sh # 离线镜像定义校验
 bash scripts/verify-deployment.sh config # 部署配置合规校验
+bash scripts/test-verify-deployment-all.sh # all 模式离线参数/探针/清理夹具
+IPAM_BACKEND_IMAGE="$IPAM_BACKEND_IMAGE" IPAM_FRONTEND_IMAGE="$IPAM_FRONTEND_IMAGE" \
+  IPAM_COMBINED_IMAGE="$IPAM_COMBINED_IMAGE" TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+  bash scripts/verify-deployment.sh all # 受保护 CI 的真实 Docker + MySQL 8 证据
+bash scripts/test-platform-config-renderer.sh # digest/拓扑/凭据/旧配置夹具
+bash scripts/test-github-protection-policy.sh # 分支保护策略夹具
+.cache/tools/actionlint/1.7.7/actionlint .github/workflows/ci.yml
 bash scripts/install-actionlint.sh       # 安装 actionlint
 bash scripts/verify-github-protection.sh # GitHub 分支保护证据（需 gh auth + Git 仓库）
 
@@ -387,11 +366,11 @@ bash scripts/verify-github-protection.sh # GitHub 分支保护证据（需 gh au
 bash scripts/ci-local.sh                 # 需要 TEST_DATABASE_URL + HEROUI_AUTH_TOKEN
 ```
 
-未在本沙箱中执行的（需要外部凭据/服务）：
+由受保护 CI 提供的外部证据：
 - 前端 typecheck/build（需要 `HEROUI_AUTH_TOKEN`）
-- Docker 镜像构建和 secret 扫描
-- GitHub Actions 完整 CI/CD 流程
-- `scripts/verify-github-protection.sh` 的完整校验（需要 Git 仓库 + gh 认证）
+- 无 secret 构建失败证明、Docker 镜像构建、运行时扫描和 GHCR digest
+- MySQL 8 全迁移矩阵与集成测试
+- GitHub 分支与 `release` Environment 保护状态
 
 ## 运维注意事项
 
@@ -404,7 +383,7 @@ bash scripts/ci-local.sh                 # 需要 TEST_DATABASE_URL + HEROUI_AUT
 
 所有环境使用版本化迁移（`prisma migrate deploy`），由后端启动脚本 `scripts/start-prod.sh` 自动执行。
 
-容量相关的 schema 变更按阶段（expand → dual-write → exact-only → contract）依次发布，每个阶段一次发布，不可合并跳跃。详见发布检查清单。
+容量迁移规划为 expand → dual-write → exact-only → contract 四个独立发布阶段。当前仓库只签入 expand migration：`backend/prisma/migrations/20260814200000_capacity_exact_expand/`；dual-write、exact-only 与 contract 仍是后续发布制品，推进前必须分别新增、验证和审批。
 
 ### 备份
 
@@ -426,11 +405,28 @@ TEST_DATABASE_URL="..." HEROUI_AUTH_TOKEN="..." bash scripts/ci-local.sh
 bash scripts/verify-github-protection.sh
 ```
 
-确认默认分支启用了保护规则、`release-gate` check 存在、`release` Environment 配置了 reviewer。
+该脚本的 schemaVersion 2 证据包含以下 14 个布尔字段，全部为 `true` 才得到 `MATCH`：
+
+1. `branchProtected`：默认分支启用保护。
+2. `enforceAdmins`：管理员同样受规则约束。
+3. `requiredStatusChecks`：启用 required status checks。
+4. `strictStatusChecks`：合并前分支必须保持最新。
+5. `requiredPullRequestReviews`：启用 PR review。
+6. `requiredCheckPresent`：required check 来自 GitHub Actions App `15368`，名称精确为 `release-gate` 或 UI 显示的 `CI / release-gate`。
+7. `dismissStaleReviews`：新提交会撤销旧批准。
+8. `requireLastPushApproval`：最近一次可审查 push 需要批准。
+9. `forcePushDisabled`：force push 关闭。
+10. `branchDeletionDisabled`：分支删除关闭。
+11. `requiredEnvironmentReviewers`：`release` Environment 至少配置一位 reviewer。
+12. `refMatchesDefaultBranch`：运行 ref 等于默认分支。
+13. `currentCommitMatches`：请求提交、默认分支 head 与 API commit 一致。
+14. `workflowPathMatches`：工作流内容来自 `.github/workflows/ci.yml`。
+
+非布尔门槛还包括 `required_approving_review_count >= 1`、六个 API 响应均为 2xx、合法 JSON、类型完整、携带 ETag，并在五分钟新鲜度窗口内完成。Actions 页面工作流显示名是 `CI`，最终 job 显示名是 `release-gate`；分支保护设置应选择 GitHub Actions 提供的该检查，并移除同名外部 status integration。读取规则的 fine-grained PAT 需要仓库 **Administration: Read** 权限。以上 GitHub 设置属于发布前的外部运维动作，本仓库未代为修改。
 
 3. **Staged migration 发布顺序**：
 
-容量相关的 schema 变更按 expand → dual-write → exact-only → contract 四个阶段依次发布。每次只推进一个 stage 对应的 migration，发布后验证应用正常运行再推进下一阶段。当前磁盘上的 migrations（`backend/prisma/migrations/`）已包含所有阶段；实际部署时 `prisma migrate deploy` 按文件名时间戳顺序依次应用。
+容量相关的 schema 变更按 expand → dual-write → exact-only → contract 四个阶段依次发布。当前磁盘只包含 expand migration；本次发布只能推进 expand。每个后续阶段都需要独立 migration、代码兼容性验证和单独发布，`prisma migrate deploy` 按文件名时间戳应用当时已签入的阶段。
 
 4. **回滚策略**：
 
@@ -444,6 +440,8 @@ bash scripts/verify-github-protection.sh
 - 所有 CI gate（unit/integration/typecheck/lint/build）绿色
 - Image manifest 验证通过
 - 部署配置合规验证通过
+
+当前上游基础镜像 `node:20-bookworm-slim` 与 CI MySQL `mysql:8` 仍使用标签。当前仓库和本地环境缺少可复核的官方 registry digest 元数据，因此该项记录为 MEDIUM provenance 残余；后续只从官方 registry 元数据取得对应平台 digest，再在独立变更中固定，禁止手工猜测摘要。
 
 ## 注意事项
 

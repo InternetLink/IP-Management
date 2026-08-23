@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+readonly ROOT_DIR
 readonly ORIGINAL_PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
-readonly NODE_BIN="$(command -v node || true)"
+NODE_BIN="$(command -v node || true)"
+readonly NODE_BIN
 
 TEMP_ROOT=""
 STUB_DIR=""
@@ -21,7 +24,7 @@ fail() {
 }
 
 usage() {
-  printf 'Usage: %s config\n' "${BASH_SOURCE[0]}" >&2
+  printf 'Usage: %s {config|all}\n' "${BASH_SOURCE[0]}" >&2
 }
 
 require_command() {
@@ -186,148 +189,33 @@ process.stdout.write(Buffer.from(startCombined, "utf8").toString("base64"));
 NODE
 }
 
-parse_json_configs() {
-  "$NODE_BIN" - \
-    "$ROOT_DIR/zbpack.backend.json" \
-    "$ROOT_DIR/backend/zbpack.json" \
-    "$ROOT_DIR/railway.json" \
-    "$ROOT_DIR/backend/migrate.sh" \
-    "$ROOT_DIR/backend/scripts/start-prod.sh" <<'NODE'
-const fs = require("fs");
+verify_release_config_contract() {
+  local legacy_config
 
-const [zbpackRootPath, zbpackBackendPath, railwayPath, migratePath, startProdPath] = process.argv.slice(2);
+  for legacy_config in railway.json zeabur.yaml zbpack.backend.json backend/zbpack.json; do
+    [[ ! -e "$ROOT_DIR/$legacy_config" ]] \
+      || fail "Legacy source-build config must stay absent: $legacy_config"
+  done
 
-function fail(message) {
-  console.error(`CONFIG_ERROR: ${message}`);
-  process.exit(1);
-}
+  [[ -f "$ROOT_DIR/scripts/render-platform-configs.mjs" ]] \
+    || fail "Platform config renderer is missing"
+  "$NODE_BIN" --check "$ROOT_DIR/scripts/render-platform-configs.mjs" >/dev/null \
+    || fail "Platform config renderer has invalid syntax"
 
-function read(path) {
-  try {
-    return fs.readFileSync(path, "utf8");
-  } catch (error) {
-    fail(`Unable to read ${path}: ${error.message}`);
-  }
-}
+  local migrate="$ROOT_DIR/backend/migrate.sh"
+  local start_prod="$ROOT_DIR/backend/scripts/start-prod.sh"
+  grep -Eqi -- 'retired' "$migrate" \
+    || fail "backend/migrate.sh must remain a retired entrypoint"
+  if grep -Eqi -- '(db:push|prisma[[:space:]]+db[[:space:]]+push|--accept-data-loss)' "$migrate"; then
+    fail "backend/migrate.sh contains a destructive schema command"
+  fi
+  grep -Fq -- 'npm run db:deploy' "$start_prod" \
+    || fail "scripts/start-prod.sh must deploy versioned migrations"
+  if grep -Eqi -- '(db:push|prisma[[:space:]]+db[[:space:]]+push)' "$start_prod"; then
+    fail "scripts/start-prod.sh contains a schema-push command"
+  fi
 
-function readJson(path) {
-  try {
-    return JSON.parse(read(path));
-  } catch (error) {
-    fail(`${path} is not valid JSON: ${error.message}`);
-  }
-}
-
-function checkZbpack(path, config) {
-  const build = String(config.build_command || "");
-  const start = String(config.start_command || "");
-  if (!build || build.includes("db:push") || build.includes("prisma db push") || build.includes("--accept-data-loss")) {
-    fail(`${path} still performs schema mutation during build`);
-  }
-  if (start !== "sh scripts/start-prod.sh") {
-    fail(`${path} must start through scripts/start-prod.sh`);
-  }
-}
-
-checkZbpack(zbpackRootPath, readJson(zbpackRootPath));
-checkZbpack(zbpackBackendPath, readJson(zbpackBackendPath));
-
-const railway = readJson(railwayPath);
-if (railway.build?.builder !== "DOCKERFILE" || railway.build?.dockerfilePath !== "Dockerfile") {
-  fail("Railway must build the root combined-image Dockerfile");
-}
-if (railway.deploy?.healthcheckPath !== "/api/health/ready") {
-  fail("Railway must use /api/health/ready as its healthcheck");
-}
-
-const migrate = read(migratePath);
-if (!migrate.toLowerCase().includes("retired") || migrate.includes("db:push") || migrate.includes("prisma db push") || migrate.includes("--accept-data-loss")) {
-  fail("backend/migrate.sh must remain a non-destructive retired entrypoint");
-}
-const startProd = read(startProdPath);
-if (!startProd.includes("npm run db:deploy") || startProd.includes("db:push") || startProd.includes("prisma db push")) {
-  fail("scripts/start-prod.sh must own versioned migration deployment");
-}
-
-console.log("JSON_CONFIG_OK");
-NODE
-}
-
-parse_zeabur_yaml() {
-  "$NODE_BIN" - "$ROOT_DIR/zeabur.yaml" <<'NODE'
-const fs = require("fs");
-
-const [path] = process.argv.slice(2);
-
-function fail(message) {
-  console.error(`CONFIG_ERROR: ${message}`);
-  process.exit(1);
-}
-
-let text;
-try {
-  text = fs.readFileSync(path, "utf8");
-} catch (error) {
-  fail(`Unable to read ${path}: ${error.message}`);
-}
-
-// Parse the YAML structure used by the template without requiring a package install.
-let blockParentIndent = null;
-for (const [index, raw] of text.split(/\r?\n/).entries()) {
-  if (/\t/.test(raw)) fail(`zeabur.yaml contains a tab at line ${index + 1}`);
-  if (!raw.trim() || /^\s*#/.test(raw)) continue;
-
-  const indent = raw.match(/^ */)[0].length;
-  const value = raw.trim();
-  if (blockParentIndent !== null) {
-    if (indent > blockParentIndent) continue;
-    blockParentIndent = null;
-  }
-  if (/^.*:\s*[|>][0-9]*[+-]?\s*(?:#.*)?$/.test(value)) {
-    blockParentIndent = indent;
-    continue;
-  }
-  if (value === "---" || value === "...") continue;
-  if (value.startsWith("-")) {
-    if (value !== "-" && !/^-[ \t]+/.test(value)) fail(`invalid YAML sequence at line ${index + 1}`);
-    continue;
-  }
-  if (!/^[^:#][^:]*:\s*(?:.*)$/.test(value)) fail(`invalid YAML mapping at line ${index + 1}`);
-}
-
-function service(name) {
-  const marker = `    - name: ${name}\n`;
-  const start = text.indexOf(marker);
-  if (start < 0) fail(`Zeabur service ${name} is missing`);
-  const next = text.indexOf("\n    - name: ", start + marker.length);
-  return text.slice(start, next < 0 ? text.length : next);
-}
-
-if (!/^apiVersion:\s*zeabur\.com\/v1\s*$/m.test(text)) fail("Zeabur apiVersion is invalid");
-if (!/^kind:\s*Template\s*$/m.test(text)) fail("Zeabur kind is invalid");
-if (/(?:db:push|prisma\s+db\s+push|--accept-data-loss)/i.test(text)) {
-  fail("Zeabur configuration contains a destructive schema-push command");
-}
-
-const backend = service("backend");
-const frontend = service("frontend");
-if (!backend.includes("- mysql")) fail("Zeabur backend must depend on mysql");
-if (!frontend.includes("- backend")) fail("Zeabur frontend must depend on backend");
-if (!backend.includes('ENTRYPOINT ["sh", "scripts/start-prod.sh"]')) {
-  fail("Zeabur backend must invoke scripts/start-prod.sh");
-}
-if (!backend.includes("healthCheck:") || !backend.includes("path: /api/health/ready")) {
-  fail("Zeabur backend must check /api/health/ready");
-}
-if (!frontend.includes('ENTRYPOINT ["node", "server.js"]')) fail("Zeabur frontend must use the standalone entrypoint");
-if (!frontend.includes("healthCheck:") || !frontend.includes("path: /")) {
-  fail("Zeabur frontend healthcheck is missing");
-}
-const exposed8080 = text.match(/^\s+port:\s+8080\s*$/gm) || [];
-if (exposed8080.length !== 2) fail("Zeabur must preserve exactly two independent 8080 HTTP services");
-
-console.log("YAML_CONFIG_OK");
-NODE
+  printf 'RELEASE_CONFIG_CONTRACT_OK\n'
 }
 
 initialize_probe() {
@@ -502,7 +390,15 @@ NODE
 }
 
 main() {
-  if [[ "$#" -ne 1 || "$1" != "config" ]]; then
+  if [[ "$#" -ne 1 ]]; then
+    usage
+    exit 2
+  fi
+  if [[ "$1" == "all" ]]; then
+    trap - EXIT INT TERM
+    exec "$BASH" "$SCRIPT_DIR/verify-deployment-all.sh"
+  fi
+  if [[ "$1" != "config" ]]; then
     usage
     exit 2
   fi
@@ -520,8 +416,7 @@ main() {
   local command_base64
   command_base64="$(parse_dockerfile)"
   printf 'DOCKERFILE_OK\n'
-  parse_json_configs
-  parse_zeabur_yaml
+  verify_release_config_contract
 
   initialize_probe
   STARTUP_COMMAND="$(printf '%s' "$command_base64" | base64 --decode)"

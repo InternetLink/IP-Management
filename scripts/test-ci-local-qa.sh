@@ -234,6 +234,15 @@ bash -c 'source "$1"; qa_cleanup_state_dir "$2"' _ "$CI_LOCAL_SCRIPT" "$environm
 install_probe_root="$(mktemp -d "${TMPDIR:-/tmp}/ipam-ci-local-qa-install.XXXXXX")"
 chmod 700 "$install_probe_root"
 install_state_record="$install_probe_root/state.path"
+mkdir -m 700 "$install_probe_root/bin"
+cat > "$install_probe_root/bin/npm" <<'FAKE_NPM'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" -eq 1 && "$1" == ci && "$PWD" == */frontend-runtime ]] || exit 91
+[[ -n "${NPM_CONFIG_USERCONFIG:-}" && -f "$NPM_CONFIG_USERCONFIG" ]] || exit 92
+command env >"${CI_LOCAL_QA_TEST_CAPTURE_DIR:?}/frontend-npm-ci.env"
+FAKE_NPM
+chmod 0755 "$install_probe_root/bin/npm"
 
 CI_LOCAL_QA_TEST_STATE_RECORD="$install_state_record" \
 CI_LOCAL_QA_TEST_TOKEN="$(openssl rand -hex 32)" \
@@ -246,6 +255,7 @@ bash -c '
 
   QA_BACKEND_RUNTIME_DIR="$QA_STATE_DIR/backend-runtime"
   QA_FRONTEND_RUNTIME_DIR="$QA_STATE_DIR/frontend-runtime"
+  export PATH="$CI_LOCAL_QA_TEST_CAPTURE_DIR/bin:$PATH"
 
   # Ambient pollution the boundary must absorb: exported before capture, exactly
   # as a careless caller or a leaked parent shell would leave them. Nothing

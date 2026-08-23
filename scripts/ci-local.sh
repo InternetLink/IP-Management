@@ -3,13 +3,16 @@ set -euo pipefail
 
 umask 077
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+readonly ROOT_DIR
 readonly BACKEND_DIR="$ROOT_DIR/backend"
 readonly FRONTEND_DIR="$ROOT_DIR/frontend"
 readonly IMAGE_MAP_SCRIPT="$ROOT_DIR/scripts/verify-image-map.sh"
 readonly DEPLOYMENT_SCRIPT="$ROOT_DIR/scripts/verify-deployment.sh"
 readonly PROTECTION_SCRIPT="$ROOT_DIR/scripts/verify-github-protection.sh"
+readonly PRIVATE_NPM_CI_SCRIPT="$ROOT_DIR/scripts/npm-ci-private.sh"
 readonly QA_STATE_ROOT="${TMPDIR:-/tmp}/ipam-ci-local-qa-${UID}"
 
 TEMP_DIR=""
@@ -148,7 +151,7 @@ backend_build() {
 
 frontend_npm_ci() {
   [[ -n "${HEROUI_AUTH_TOKEN:-}" ]] || environment_blocked 'heroui-auth-token-unset'
-  (cd "$FRONTEND_DIR" && npm ci)
+  "$PRIVATE_NPM_CI_SCRIPT" "$FRONTEND_DIR"
 }
 
 frontend_tests() {
@@ -536,7 +539,7 @@ qa_backend_bootstrap_command() {
 }
 
 qa_frontend_install() {
-  HEROUI_AUTH_TOKEN="$QA_HEROUI_AUTH_TOKEN" npm ci
+  HEROUI_AUTH_TOKEN="$QA_HEROUI_AUTH_TOKEN" "$PRIVATE_NPM_CI_SCRIPT" "$PWD"
 }
 
 qa_backend_build_command() {

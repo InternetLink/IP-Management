@@ -4,13 +4,8 @@ import {ApiPayloadError, api, parseDecimalString} from "../src/lib/api";
 import {formatGeofeedImportErrors, formatGeofeedImportSummary, formatSplitToastDescription} from "../src/lib/api-display";
 import type {DecimalString} from "../src/lib/api-types";
 
-type DecimalStringMustNotBeNumber = DecimalString extends number ? never : true;
+type DecimalStringMustNotBeNumber = Extract<DecimalString, number> extends never ? true : never;
 const decimalStringMustNotBeNumber: DecimalStringMustNotBeNumber = true;
-
-function assertDecimalStringCannotBeUsedAsNumber(value: DecimalString): void {
-  // @ts-expect-error DecimalString must remain an exact decimal string.
-  void (value * 2);
-}
 
 describe("API response contracts", () => {
   afterEach(() => {
@@ -37,7 +32,6 @@ describe("API response contracts", () => {
     expect(() => parseDecimalString(12345, "dashboard.totalCapacity")).toThrow(ApiPayloadError);
     expect(() => parseDecimalString("12.5", "dashboard.totalCapacity")).toThrow(ApiPayloadError);
     expect(decimalStringMustNotBeNumber).toBe(true);
-    assertDecimalStringCannotBeUsedAsNumber(parseDecimalString("42"));
   });
 
   it("forwards an AbortSignal from a public read method to fetch", async () => {

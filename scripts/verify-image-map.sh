@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${VERIFY_IMAGE_MAP_MODE:-auto}"
 OUTPUT_PATH="${IMAGE_MAP_OUTPUT:-}"
+REQUIRE_REGISTRY_DIGEST="${VERIFY_IMAGE_MAP_REQUIRE_REGISTRY_DIGEST:-0}"
+TARGET_PLATFORM="${VERIFY_IMAGE_MAP_TARGET_PLATFORM:-linux/amd64}"
 TEMP_DIR="$(mktemp -d)"
 ROWS_FILE="$TEMP_DIR/images.tsv"
 
@@ -79,7 +81,8 @@ assert_last_user_node() {
 
 assert_runtime_has_no_sources() {
   local file="$1"
-  local runtime_file="$TEMP_DIR/runtime-$(basename "$file")"
+  local runtime_file
+  runtime_file="$TEMP_DIR/runtime-$(basename "$file")"
   awk 'toupper($1) == "FROM" { content="" } { content=content $0 ORS } END { printf "%s", content }' "$file" >"$runtime_file"
   assert_not_contains "$runtime_file" 'COPY[^#]*(/|[[:space:]])src([[:space:]]|/|$)' "runtime-source-$file"
   assert_not_contains "$runtime_file" 'COPY[^#]*(tsconfig|nest-cli|eslint\.config|postcss\.config)' "runtime-tooling-$file"
@@ -133,22 +136,23 @@ static_checks() {
   local backend="$ROOT_DIR/Dockerfile.backend"
   local frontend="$ROOT_DIR/Dockerfile.frontend"
   local combined="$ROOT_DIR/Dockerfile"
-  local zeabur="$ROOT_DIR/zeabur.yaml"
-  local railway="$ROOT_DIR/railway.json"
 
-  for file in "$backend" "$frontend" "$combined" "$zeabur" "$railway" "$ROOT_DIR/scripts/start-combined.sh"; do
+  for file in "$backend" "$frontend" "$combined" "$ROOT_DIR/scripts/start-combined.sh"; do
     [ -f "$file" ] || fail "missing-file-$(basename "$file")"
+  done
+
+  local legacy_config
+  for legacy_config in railway.json zeabur.yaml zbpack.backend.json backend/zbpack.json; do
+    [ ! -e "$ROOT_DIR/$legacy_config" ] || fail "legacy-source-build-${legacy_config//\//-}"
   done
 
   assert_min_count "$backend" '^[[:space:]]*FROM[[:space:]]+' 3 'backend-multistage'
   assert_min_count "$frontend" '^[[:space:]]*FROM[[:space:]]+' 2 'frontend-multistage'
   assert_min_count "$combined" '^[[:space:]]*FROM[[:space:]]+' 4 'combined-multistage'
-  assert_min_count "$zeabur" '^[[:space:]]*FROM[[:space:]]+' 5 'zeabur-multistage'
 
   assert_last_user_node "$backend"
   assert_last_user_node "$frontend"
   assert_last_user_node "$combined"
-  assert_count "$zeabur" '^[[:space:]]*USER[[:space:]]+node[[:space:]]*$' 2 'zeabur-runtime-users'
 
   assert_runtime_has_no_sources "$backend"
   assert_runtime_has_no_sources "$frontend"
@@ -157,13 +161,22 @@ static_checks() {
   assert_secret_policy "$backend" 0
   assert_secret_policy "$frontend" 1
   assert_secret_policy "$combined" 1
-  assert_secret_policy "$zeabur" 1
   assert_secret_env_frontend_version "$backend"
   assert_secret_env_frontend_version "$frontend"
   assert_secret_env_frontend_version "$combined"
-  assert_secret_env_frontend_version "$zeabur"
   assert_not_contains "$backend" '(heroui_token|HEROUI_AUTH_TOKEN)' 'backend-secret-reference'
-  assert_not_contains "$zeabur" '^[[:space:]]*(- key:|HEROUI_AUTH_TOKEN:)[[:space:]]*HEROUI_AUTH_TOKEN' 'zeabur-token-variable'
+
+  local image_file
+  for image_file in "$backend" "$frontend" "$combined"; do
+    assert_contains "$image_file" '^ARG OCI_SOURCE=https://github\.com/internetlink/ipam-Management$' \
+      "oci-source-arg-$(basename "$image_file")"
+    assert_contains "$image_file" '^ARG OCI_REVISION=unknown$' \
+      "oci-revision-arg-$(basename "$image_file")"
+    assert_contains "$image_file" 'org\.opencontainers\.image\.source="\$\{OCI_SOURCE\}"' \
+      "oci-source-label-$(basename "$image_file")"
+    assert_contains "$image_file" 'org\.opencontainers\.image\.revision="\$\{OCI_REVISION\}"' \
+      "oci-revision-label-$(basename "$image_file")"
+  done
 
   assert_contains "$backend" '^[[:space:]]*ENV[[:space:]]+NODE_ENV=production' 'backend-production-env'
   assert_contains "$backend" '^[[:space:]]*EXPOSE[[:space:]]+8080[[:space:]]*$' 'backend-port'
@@ -181,11 +194,6 @@ static_checks() {
   assert_contains "$ROOT_DIR/scripts/start-combined.sh" '/api/health/ready' 'combined-readiness'
   assert_contains "$ROOT_DIR/scripts/start-combined.sh" 'node server\.js' 'combined-frontend-entrypoint'
   sh -n "$ROOT_DIR/scripts/start-combined.sh" || fail 'combined-start-shell-syntax'
-
-  assert_contains "$railway" '"healthcheckPath"[[:space:]]*:[[:space:]]*"/api/health/ready"' 'railway-readiness'
-  assert_contains "$zeabur" 'path:[[:space:]]*/api/health/ready' 'zeabur-backend-readiness'
-  assert_contains "$zeabur" 'path:[[:space:]]*/[[:space:]]*$' 'zeabur-frontend-readiness'
-  assert_contains "$zeabur" 'APP_ORIGIN:' 'zeabur-app-origin'
 
   ROOT_DIR_FOR_NODE="$ROOT_DIR" node <<'NODE' || fail 'backend-prisma-production-dependency'
 const packageJson = require(`${process.env.ROOT_DIR_FOR_NODE}/backend/package.json`);
@@ -298,6 +306,8 @@ const expectedLabels = {
   'io.ipam.image.entrypoint': process.env.EXPECTED_LABEL_ENTRYPOINT,
   'io.ipam.image.ports': process.env.EXPECTED_LABEL_PORTS,
   'io.ipam.image.runtime-uid': '1000',
+  'org.opencontainers.image.source': process.env.EXPECTED_OCI_SOURCE,
+  'org.opencontainers.image.revision': process.env.EXPECTED_OCI_REVISION,
 };
 for (const [key, value] of Object.entries(expectedLabels)) {
   if (labels[key] !== value) fail(`label-${key}`);
@@ -320,7 +330,19 @@ if ([...configuredEnv].some((value) => value.startsWith('HEROUI_AUTH_TOKEN='))) 
 }
 
 const platformParts = [image.Os, image.Architecture, image.Variant].filter(Boolean);
-const registryDigest = (image.RepoDigests ?? []).find((value) => value.includes('@sha256:')) ?? null;
+const expectedRepository = process.env.EXPECTED_REPOSITORY;
+const registryDigest = (image.RepoDigests ?? []).find(
+  (value) => value.startsWith(`${expectedRepository}@sha256:`),
+) ?? null;
+if (process.env.REQUIRE_REGISTRY_DIGEST === '1') {
+  const escapedRepository = expectedRepository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!registryDigest || !new RegExp(`^${escapedRepository}@sha256:[a-f0-9]{64}$`).test(registryDigest)) {
+    fail('registry-digest');
+  }
+  if (platformParts.join('/') !== process.env.EXPECTED_TARGET_PLATFORM) {
+    fail('target-platform');
+  }
+}
 process.stdout.write(JSON.stringify({
   entrypointArgv: image.Config.Entrypoint ?? [],
   imageId: image.Id ?? null,
@@ -343,6 +365,7 @@ inspect_image() {
   local required_env="$9"
   local metadata_file="${10}"
   local actual_uid
+  local expected_repository
 
   docker image inspect "$image" >/dev/null 2>&1 \
     || environment_blocked "image-unavailable-$name"
@@ -350,6 +373,11 @@ inspect_image() {
   actual_uid="$(docker run --rm --entrypoint id "$image" -u 2>/dev/null)" \
     || environment_blocked "image-not-runnable-$name"
   [ "$actual_uid" = '1000' ] || fail "runtime-uid-$name"
+
+  expected_repository="${image%@*}"
+  if [ "$expected_repository" = "$image" ]; then
+    expected_repository="${image%:*}"
+  fi
 
   if ! docker image inspect "$image" | \
     EXPECTED_NAME="$name" \
@@ -360,6 +388,11 @@ inspect_image() {
     EXPECTED_LABEL_PORTS="$label_ports" \
     EXPECTED_EXPOSED_PORTS="$exposed_ports" \
     EXPECTED_ENV="$required_env" \
+    EXPECTED_REPOSITORY="$expected_repository" \
+    REQUIRE_REGISTRY_DIGEST="$REQUIRE_REGISTRY_DIGEST" \
+    EXPECTED_TARGET_PLATFORM="$TARGET_PLATFORM" \
+    EXPECTED_OCI_SOURCE="${OCI_IMAGE_SOURCE:-https://github.com/internetlink/ipam-Management}" \
+    EXPECTED_OCI_REVISION="${OCI_IMAGE_REVISION:-${GITHUB_SHA:-unknown}}" \
     ACTUAL_UID="$actual_uid" \
     node "$TEMP_DIR/inspect-image.cjs" >"$metadata_file"
   then
@@ -368,6 +401,14 @@ inspect_image() {
 
   assert_runtime_contents "$name" "$image"
   scan_image_for_secret "$name" "$image"
+}
+
+validate_release_manifest() {
+  local manifest_path="$1"
+
+  [ -f "$manifest_path" ] || fail 'release-manifest-missing'
+  node "$ROOT_DIR/scripts/release-manifest.mjs" "$manifest_path" >/dev/null \
+    || fail 'release-manifest-contract'
 }
 
 write_manifest() {
@@ -449,6 +490,10 @@ main() {
   require_command sha256sum
   require_command tar
 
+  if [ "$REQUIRE_REGISTRY_DIGEST" != '0' ] && [ "$REQUIRE_REGISTRY_DIGEST" != '1' ]; then
+    fail 'invalid-require-registry-digest'
+  fi
+
   static_checks
   write_inspect_helper
 
@@ -457,6 +502,11 @@ main() {
   local context_digest
   resolved_mode="$(resolve_mode)"
   context_digest="$(context_sha)"
+
+  if [ "$REQUIRE_REGISTRY_DIGEST" = '1' ]; then
+    [ "$resolved_mode" = 'docker' ] || fail 'release-requires-docker-mode'
+    [ -n "$OUTPUT_PATH" ] || fail 'release-output-required'
+  fi
 
   local names=('ipam-backend' 'ipam-frontend' 'ipam-combined')
   local dockerfiles=('Dockerfile.backend' 'Dockerfile.frontend' 'Dockerfile')
@@ -522,6 +572,21 @@ main() {
   fi
 
   write_manifest "$resolved_mode" "$docker_status" "$context_digest"
+  if [ "$REQUIRE_REGISTRY_DIGEST" = '1' ]; then
+    validate_release_manifest "$OUTPUT_PATH"
+    info 'IMAGE_MAP_RELEASE_MANIFEST_OK'
+  fi
 }
 
-main "$@"
+if [ "$#" -eq 2 ] && [ "$1" = '--validate-release-manifest' ]; then
+  require_command node
+  validate_release_manifest "$2"
+  info 'IMAGE_MAP_RELEASE_MANIFEST_OK'
+  exit 0
+fi
+if [ "$#" -ne 0 ]; then
+  printf 'Usage: %s [--validate-release-manifest PATH]\n' "${BASH_SOURCE[0]}" >&2
+  exit 2
+fi
+
+main
