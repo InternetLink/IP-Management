@@ -24,6 +24,7 @@ const en = {
     view: 'View details',
     select: 'Select',
     confirmDelete: 'Confirm Delete',
+    language: 'Language',
   },
 
   // Navigation
@@ -36,6 +37,7 @@ const en = {
     settings: 'Settings',
     help: 'Help & Information',
     logout: 'Log out',
+    navigationMenu: 'Navigation menu',
   },
 
   // Dashboard
@@ -60,6 +62,12 @@ const en = {
     warnings: 'Warnings',
     healthy: 'Healthy',
     high: 'High',
+    noTrendData: 'No activity recorded yet',
+    noTrendDataHint: 'Create a prefix to start building the activity trend.',
+    noRirData: 'No RIR distribution yet',
+    noRirDataHint: 'Assign an RIR to a root prefix to see how your space is split.',
+    noRecentActivity: 'No recent activity',
+    noRecentActivityHint: 'Changes to prefixes, allocations, and geofeed entries appear here.',
   },
 
   // Prefixes (Tree IPAM)

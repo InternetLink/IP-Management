@@ -1,7 +1,7 @@
 "use client";
 
 import {ArrowLeft, Plus, ArrowsRotateRight, Pencil, LayoutSplitColumns, ChevronRight, CircleCheck, CircleDashed, CircleExclamation, LayoutList, TrashBin, ArrowDown, ArrowUp, ArrowUpArrowDown} from "@gravity-ui/icons";
-import {Button, Card, Chip, Input, Label, ListBox, Select, Spinner, TextField, toast} from "@heroui/react";
+import {Button, Card, Chip, FieldError, Input, Label, ListBox, Select, Spinner, TextField, toast} from "@heroui/react";
 import {DataGrid, type DataGridColumn} from "@heroui-pro/react";
 import {useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
@@ -89,23 +89,33 @@ function percent(part: bigint, total: bigint) {
   return Number((part * 10000n) / total) / 100;
 }
 
-function validatePrefixMetadata(data: {cidr: string; vlan: string; gateway: string}, parentCidr: string) {
+/** Child-form fields that own inline validation feedback. */
+type ValidatedChildField = "cidr" | "vlan" | "gateway";
+
+/** A validation failure bound to the exact field that produced it. */
+type ChildFieldError = {field: ValidatedChildField; message: string};
+
+type ChildFormData = {cidr: string; vlan: string; gateway: string; assignedTo: string; description: string};
+
+const BLANK_CHILD_FORM: ChildFormData = {cidr: "", vlan: "", gateway: "", assignedTo: "", description: ""};
+
+function validatePrefixMetadata(data: {cidr: string; vlan: string; gateway: string}, parentCidr: string): ChildFieldError | null {
   const cidr = validateCidr(data.cidr);
-  if (!cidr.valid) return cidr.error ?? "Invalid CIDR";
+  if (!cidr.valid) return {field: "cidr", message: cidr.error ?? "Invalid CIDR"};
 
   const child = parseCidr(data.cidr);
   const parent = parseCidr(parentCidr);
-  if (!child || !parent || child.version !== parent.version) return "Child prefix must use the same IP version as the parent";
-  if (child.prefix <= parent.prefix) return "Child prefix length must be greater than the parent prefix length";
-  if (!isSubsetOf(data.cidr, parentCidr)) return "Child prefix must be contained by the parent prefix";
+  if (!child || !parent || child.version !== parent.version) return {field: "cidr", message: "Child prefix must use the same IP version as the parent"};
+  if (child.prefix <= parent.prefix) return {field: "cidr", message: "Child prefix length must be greater than the parent prefix length"};
+  if (!isSubsetOf(data.cidr, parentCidr)) return {field: "cidr", message: "Child prefix must be contained by the parent prefix"};
 
   if (data.vlan) {
     const vlan = Number(data.vlan);
-    if (!Number.isInteger(vlan) || vlan < 1 || vlan > 4094) return "VLAN must be an integer between 1 and 4094";
+    if (!Number.isInteger(vlan) || vlan < 1 || vlan > 4094) return {field: "vlan", message: "VLAN must be an integer between 1 and 4094"};
   }
 
   if (data.gateway && !isValidIPv4(data.gateway) && !isValidIPv6(data.gateway)) {
-    return "Gateway must be a valid IPv4 or IPv6 address";
+    return {field: "gateway", message: "Gateway must be a valid IPv4 or IPv6 address"};
   }
 
   return null;
@@ -182,12 +192,12 @@ function PrefixSpaceVisualization({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-foreground text-sm font-semibold">Address Space</p>
           <p className="text-muted text-xs">Child prefix occupancy inside this prefix.</p>
         </div>
-        <span className="text-muted text-xs tabular-nums">{childPrefixes.length} child prefixes</span>
+        <span className="text-muted shrink-0 whitespace-nowrap text-xs tabular-nums">{childPrefixes.length} child prefixes</span>
       </div>
       <div className="bg-default-100 relative h-10 overflow-hidden rounded-xl">
         {segments.length === 0 ? (
@@ -238,12 +248,12 @@ function AllocationPoolVisualization({counts, heatmap}: {counts: AllocationCount
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-foreground text-sm font-semibold">IP Pool</p>
           <p className="text-muted text-xs">Allocation status distribution and address order.</p>
         </div>
-        <span className="text-muted text-xs tabular-nums">{counts.all} IPs</span>
+        <span className="text-muted shrink-0 whitespace-nowrap text-xs tabular-nums">{counts.all} IPs</span>
       </div>
       <div className="bg-default-100 flex h-3 overflow-hidden rounded-full">
         {statusSegments.map((segment) => (
@@ -406,7 +416,23 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
   const [showSplit, setShowSplit] = useState(false);
   const [splitLen, setSplitLen] = useState("");
   const [showAddChild, setShowAddChild] = useState(false);
-  const [childForm, setChildForm] = useState({cidr: "", vlan: "", gateway: "", assignedTo: "", description: ""});
+  const [childForm, setChildForm] = useState<ChildFormData>(BLANK_CHILD_FORM);
+  const [childFieldError, setChildFieldError] = useState<ChildFieldError | null>(null);
+  const childCidrInputRef = useRef<HTMLInputElement>(null);
+  const childVlanInputRef = useRef<HTMLInputElement>(null);
+  const childGatewayInputRef = useRef<HTMLInputElement>(null);
+  const childFieldRefs = useMemo(() => ({
+    cidr: childCidrInputRef,
+    gateway: childGatewayInputRef,
+    vlan: childVlanInputRef,
+  }), []);
+
+  // Focus lands after the commit that sets `aria-invalid` and `aria-describedby`,
+  // so assistive technology announces the field together with its error.
+  useEffect(() => {
+    if (!childFieldError) return;
+    childFieldRefs[childFieldError.field].current?.focus();
+  }, [childFieldError, childFieldRefs]);
   const [editAlloc, setEditAlloc] = useState<Allocation | null>(null);
   const [showEditAlloc, setShowEditAlloc] = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
@@ -449,14 +475,37 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
     finally { setSaving(false); }
   }, [currentPrefixLen, maxPrefixLength, prefix, prefixId, splitLen, loadData, t]);
 
+  const openAddChildDialog = useCallback(() => {
+    setChildForm(BLANK_CHILD_FORM);
+    setChildFieldError(null);
+    setShowAddChild(true);
+  }, []);
+
+  const closeAddChildDialog = useCallback(() => {
+    setChildFieldError(null);
+    setShowAddChild(false);
+  }, []);
+
+  /** Writes one child-form field and retires the inline error that field owns. */
+  const updateChildField = useCallback((field: keyof ChildFormData, value: string) => {
+    setChildForm((previous) => ({...previous, [field]: value}));
+    setChildFieldError((previous) => previous?.field === field ? null : previous);
+  }, []);
+
   const handleAddChild = useCallback(async () => {
     if (!prefix) return;
 
     const validationError = validatePrefixMetadata(childForm, prefix.cidr);
     if (validationError) {
-      toast.danger(validationError);
+      // The inline error is the feedback: it is durable, sits beside the field,
+      // and is programmatically associated with it. A toast would add nothing
+      // and, being bottom-anchored, would sit on top of this dialog's own
+      // action row on a 390px-tall viewport.
+      setChildFieldError(validationError);
       return;
     }
+
+    setChildFieldError(null);
 
     setSaving(true);
     try {
@@ -469,11 +518,11 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
         description: childForm.description || undefined,
       });
       toast.success(t.common.create);
-      setShowAddChild(false);
+      closeAddChildDialog();
       loadData();
     } catch (err: unknown) { toast.danger(errorMessage(err)); }
     finally { setSaving(false); }
-  }, [prefixId, childForm, prefix, loadData, t]);
+  }, [closeAddChildDialog, prefixId, childForm, prefix, loadData, t]);
 
   const handleSaveAlloc = useCallback(async () => {
     if (!editAlloc) return;
@@ -639,7 +688,7 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
       {/* ── Hero Header ── */}
       <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-accent/5 via-transparent to-accent/3 p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4">
             <IconButton
               label={t.prefixes.back}
               size="sm"
@@ -651,16 +700,18 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
             >
               <ArrowLeft className="size-5" />
             </IconButton>
-            <div>
-              {prefix.parent && <p className="text-muted font-mono text-xs">{prefix.parent.cidr} →</p>}
-              <h1 className="text-foreground font-mono text-xl font-bold tracking-tight">{prefix.cidr}</h1>
+            <div className="min-w-0">
+              {prefix.parent && <p className="text-muted truncate font-mono text-xs">{prefix.parent.cidr} →</p>}
+              <h1 className="text-foreground break-all font-mono text-xl font-bold tracking-tight">{prefix.cidr}</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          {/* Wraps instead of running past the viewport edge on narrow screens;
+              every action stays reachable without page-level horizontal scroll. */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="secondary" onPress={() => { setSplitLen(String(currentPrefixLen + 1)); setShowSplit(true); }}>
               <LayoutSplitColumns className="size-4" />{t.prefixes.split}
             </Button>
-            <Button size="sm" variant="secondary" onPress={() => { setChildForm({cidr: "", vlan: "", gateway: "", assignedTo: "", description: ""}); setShowAddChild(true); }}>
+            <Button size="sm" variant="secondary" onPress={openAddChildDialog}>
               <Plus className="size-4" />{t.prefixes.addChild}
             </Button>
             {prefix.version === 4 && (
@@ -712,7 +763,7 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
           </div>
           <div className="py-1">
              {children.map((child) => (
-              <div key={child.id} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-default-50">
+              <div key={child.id} className="group flex flex-wrap items-center gap-3 px-4 py-2.5 transition-colors hover:bg-default-50">
                 <button className="text-foreground font-mono text-sm font-semibold tracking-tight hover:text-accent transition-colors" onClick={() => router.push(`/prefixes/${child.id}`)}>
                   {child.cidr}
                 </button>
@@ -738,14 +789,14 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
       {hasIPs && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 rounded-xl bg-default-100 p-1">
+            <div className="flex flex-wrap items-center gap-1.5 rounded-xl bg-default-100 p-1">
               {filterTabs.map(tab => (
                 <button key={tab.key} className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all ${filter === tab.key ? "bg-background text-foreground shadow-sm" : "text-muted hover:text-foreground"}`} onClick={() => { allocationQueryKeyRef.current = `${prefixId}:${tab.key}`; setFilter(tab.key); setSelectedAllocationKeys(new Set()); }}>
                   {tab.label}<span className={`tabular-nums text-xs ${filter === tab.key ? "text-accent" : "text-muted"}`}>{tab.count}</span>
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-muted text-xs tabular-nums">{selectedAllocationIds.length} selected</span>
               {ALLOCATION_STATUS_OPTIONS.map((status) => (
                 <Button
@@ -795,7 +846,7 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
           </div>
           <p className="text-foreground text-sm font-medium">{t.prefixes.emptyPrefixState}</p>
           <p className="text-muted text-xs">{t.prefixes.emptyPrefixHint}</p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-center gap-2">
             <Button size="sm" variant="secondary" onPress={() => { setSplitLen(String(currentPrefixLen + 1)); setShowSplit(true); }}>
               <LayoutSplitColumns className="size-4" />{t.prefixes.split}
             </Button>
@@ -819,15 +870,27 @@ export function PrefixDetailPage({prefixId}: {prefixId: string}) {
       </Dialog>
 
       {/* ── Add Child Dialog ── */}
-      <Dialog isOpen={showAddChild} onClose={() => setShowAddChild(false)} title={`${t.prefixes.addChild}: ${prefix.cidr}`} footer={<>
-        <Button variant="ghost" onPress={() => setShowAddChild(false)}>{t.common.cancel}</Button>
+      <Dialog isOpen={showAddChild} onClose={closeAddChildDialog} title={`${t.prefixes.addChild}: ${prefix.cidr}`} footer={<>
+        <Button variant="ghost" onPress={closeAddChildDialog}>{t.common.cancel}</Button>
         <Button isDisabled={saving} onPress={handleAddChild}>{t.common.create}</Button>
       </>}>
-        <TextField value={childForm.cidr} onChange={(v) => setChildForm(p => ({...p, cidr: v}))}><Label>{t.prefixes.cidr}</Label><Input placeholder={`${prefix.cidr.split('/')[0]}/${currentPrefixLen + 1}`} className="font-mono" /></TextField>
-        <TextField value={childForm.vlan} onChange={(v) => setChildForm(p => ({...p, vlan: v}))}><Label>{t.prefixes.vlan}</Label><Input type="number" /></TextField>
-        <TextField value={childForm.gateway} onChange={(v) => setChildForm(p => ({...p, gateway: v}))}><Label>{t.prefixes.gateway}</Label><Input className="font-mono" /></TextField>
-        <TextField value={childForm.assignedTo} onChange={(v) => setChildForm(p => ({...p, assignedTo: v}))}><Label>{t.prefixes.assignedTo}</Label><Input /></TextField>
-        <TextField value={childForm.description} onChange={(v) => setChildForm(p => ({...p, description: v}))}><Label>{t.common.description}</Label><Input /></TextField>
+        <TextField isInvalid={childFieldError?.field === "cidr"} value={childForm.cidr} onChange={(v) => updateChildField("cidr", v)}>
+          <Label>{t.prefixes.cidr}</Label>
+          <Input ref={childCidrInputRef} placeholder={`${prefix.cidr.split('/')[0]}/${currentPrefixLen + 1}`} className="font-mono" />
+          <FieldError>{childFieldError?.field === "cidr" ? childFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField isInvalid={childFieldError?.field === "vlan"} value={childForm.vlan} onChange={(v) => updateChildField("vlan", v)}>
+          <Label>{t.prefixes.vlan}</Label>
+          <Input ref={childVlanInputRef} type="number" />
+          <FieldError>{childFieldError?.field === "vlan" ? childFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField isInvalid={childFieldError?.field === "gateway"} value={childForm.gateway} onChange={(v) => updateChildField("gateway", v)}>
+          <Label>{t.prefixes.gateway}</Label>
+          <Input ref={childGatewayInputRef} className="font-mono" />
+          <FieldError>{childFieldError?.field === "gateway" ? childFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField value={childForm.assignedTo} onChange={(v) => updateChildField("assignedTo", v)}><Label>{t.prefixes.assignedTo}</Label><Input /></TextField>
+        <TextField value={childForm.description} onChange={(v) => updateChildField("description", v)}><Label>{t.common.description}</Label><Input /></TextField>
       </Dialog>
 
       {/* ── Edit Allocation Dialog ── */}

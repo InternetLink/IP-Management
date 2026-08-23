@@ -31,7 +31,12 @@ async function bootstrap() {
     transformOptions: { enableImplicitConversion: false },
   }));
   const port = process.env.PORT ?? '3001';
-  await app.listen(port);
+  const host = process.env.HOST?.trim();
+  if (host) {
+    await app.listen(port, host);
+  } else {
+    await app.listen(port);
+  }
   logger.log(formatLogEvent('startup.ready', { port }));
 }
 

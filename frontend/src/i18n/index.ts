@@ -82,3 +82,13 @@ export const LOCALE_LABELS: Record<Locale, string> = {
   en: 'English',
   'zh-TW': '繁體中文',
 };
+
+/**
+ * Compact locale codes for narrow viewports. These are identifiers rather than
+ * translated prose, so they stay the same in every dictionary; the control's
+ * accessible name always carries the full label.
+ */
+export const LOCALE_SHORT_LABELS: Record<Locale, string> = {
+  en: 'EN',
+  'zh-TW': 'TW',
+};

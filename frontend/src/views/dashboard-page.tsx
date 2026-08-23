@@ -1,7 +1,9 @@
 "use client";
 
 import {Card, Chip, Spinner} from "@heroui/react";
+import {ChartColumn, CirclesIntersection} from "@gravity-ui/icons";
 import {KPI, BarChart, PieChart, ChartTooltip, DataGrid, type DataGridColumn} from "@heroui-pro/react";
+import type {ReactNode} from "react";
 import {useMemo} from "react";
 import {RequestState} from "../components/request-state";
 import {formatIPCount} from "../lib/cidr";
@@ -52,6 +54,10 @@ export function DashboardPage() {
   const utilizationRate = stats.utilizationRate ?? 0;
   const rirDistribution = stats.rirDistribution.map((r, i) => ({...r, color: RIR_COLORS[i % RIR_COLORS.length]}));
   const allocationTrend = stats.allocationTrend;
+  // A chart drawn from an all-zero series is indistinguishable from a failed
+  // load, so both charts swap to explicit empty-state copy instead.
+  const hasTrendData = allocationTrend.some((point) => (point.ipv4 ?? 0) > 0 || (point.ipv6 ?? 0) > 0);
+  const hasRirData = rirDistribution.some((entry) => entry.value > 0);
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 pb-10 pt-4">
@@ -98,14 +104,22 @@ export function DashboardPage() {
             </div>
           </Card.Header>
           <Card.Content>
-            <BarChart data={allocationTrend} height={220}>
-              <BarChart.Grid vertical={false} />
-              <BarChart.XAxis dataKey="month" tickMargin={8} />
-              <BarChart.YAxis width={30} />
-              <BarChart.Bar barSize={12} dataKey="ipv4" fill="var(--chart-2)" name="IPv4" radius={[4, 4, 0, 0]} stackId="stack" />
-              <BarChart.Bar barSize={12} dataKey="ipv6" fill="var(--chart-4)" name="IPv6" radius={[4, 4, 0, 0]} stackId="stack" />
-              <BarChart.Tooltip content={<BarChart.TooltipContent />} />
-            </BarChart>
+            {hasTrendData ? (
+              <BarChart data={allocationTrend} height={220}>
+                <BarChart.Grid vertical={false} />
+                <BarChart.XAxis dataKey="month" tickMargin={8} />
+                <BarChart.YAxis width={30} />
+                <BarChart.Bar barSize={12} dataKey="ipv4" fill="var(--chart-2)" name="IPv4" radius={[4, 4, 0, 0]} stackId="stack" />
+                <BarChart.Bar barSize={12} dataKey="ipv6" fill="var(--chart-4)" name="IPv6" radius={[4, 4, 0, 0]} stackId="stack" />
+                <BarChart.Tooltip content={<BarChart.TooltipContent />} />
+              </BarChart>
+            ) : (
+              <ChartEmptyState
+                hint={t.dashboard.noTrendDataHint}
+                icon={<ChartColumn className="text-muted size-6" />}
+                title={t.dashboard.noTrendData}
+              />
+            )}
           </Card.Content>
         </Card>
 
@@ -115,6 +129,8 @@ export function DashboardPage() {
             <Card.Description>{t.dashboard.rirDescription}</Card.Description>
           </Card.Header>
           <Card.Content className="flex flex-col items-center gap-4">
+            {hasRirData ? (
+            <>
             <div className="relative">
               <PieChart height={200} width={200}>
                 <PieChart.Pie cornerRadius={6} cx="50%" cy="50%" data={rirDistribution} dataKey="value" innerRadius="65%" nameKey="name" paddingAngle={-8} strokeWidth={0}>
@@ -138,6 +154,14 @@ export function DashboardPage() {
                 </div>
               ))}
             </div>
+            </>
+            ) : (
+              <ChartEmptyState
+                hint={t.dashboard.noRirDataHint}
+                icon={<CirclesIntersection className="text-muted size-6" />}
+                title={t.dashboard.noRirData}
+              />
+            )}
           </Card.Content>
         </Card>
       </div>
@@ -183,10 +207,30 @@ export function DashboardPage() {
           aria-label="Recent activity"
           columns={auditColumns}
           contentClassName="min-w-[600px]"
-                data={stats.recentAudit}
-                getRowId={(item: AuditEntry) => item.id}
+          data={stats.recentAudit}
+          getRowId={(item: AuditEntry) => item.id}
+          renderEmptyState={() => (
+            <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+              <p className="text-foreground text-sm font-medium">{t.dashboard.noRecentActivity}</p>
+              <p className="text-muted text-xs">{t.dashboard.noRecentActivityHint}</p>
+            </div>
+          )}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Explicit zero-data state for a chart card. Occupies the chart's height so the
+ * dashboard grid keeps its rhythm when a series has nothing to plot.
+ */
+function ChartEmptyState({hint, icon, title}: {hint: string; icon: ReactNode; title: string}) {
+  return (
+    <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
+      <div className="bg-default-100 flex size-12 items-center justify-center rounded-2xl">{icon}</div>
+      <p className="text-foreground text-sm font-medium">{title}</p>
+      <p className="text-muted max-w-xs text-xs">{hint}</p>
     </div>
   );
 }
