@@ -1,10 +1,10 @@
 "use client";
 
 import {Plus, FolderTree, Pencil, TrashBin} from "@gravity-ui/icons";
-import {Button, Card, Chip, Input, Label, SearchField, Spinner, TextField, toast} from "@heroui/react";
+import {Button, Card, Chip, FieldError, Input, Label, SearchField, Spinner, TextField, toast} from "@heroui/react";
 import {DataGrid, type DataGridColumn} from "@heroui-pro/react";
 import {useRouter} from "next/navigation";
-import {useCallback, useMemo, useState} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 
 import {Dialog} from "../components/dialog";
 import {IconButton} from "../components/icon-button";
@@ -28,6 +28,14 @@ type PrefixFormData = {
   assignedTo: string;
   status: PrefixStatus;
 };
+
+/** Create-form fields that own inline validation feedback. */
+type ValidatedPrefixField = "cidr" | "vlan" | "gateway";
+
+/** A validation failure bound to the exact field that produced it. */
+type PrefixFieldError = {field: ValidatedPrefixField; message: string};
+
+const BLANK_PREFIX_FORM: PrefixFormData = {cidr: "", rir: "APNIC", description: "", vlan: "", gateway: "", assignedTo: "", status: "Active"};
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed";
@@ -54,17 +62,17 @@ function formatIPCount(n: number) {
   return n.toLocaleString();
 }
 
-function validatePrefixForm(data: {cidr: string; vlan: string; gateway: string}) {
+function validatePrefixForm(data: {cidr: string; vlan: string; gateway: string}): PrefixFieldError | null {
   const cidr = validateCidr(data.cidr);
-  if (!cidr.valid) return cidr.error ?? "Invalid CIDR";
+  if (!cidr.valid) return {field: "cidr", message: cidr.error ?? "Invalid CIDR"};
 
   if (data.vlan) {
     const vlan = Number(data.vlan);
-    if (!Number.isInteger(vlan) || vlan < 1 || vlan > 4094) return "VLAN must be an integer between 1 and 4094";
+    if (!Number.isInteger(vlan) || vlan < 1 || vlan > 4094) return {field: "vlan", message: "VLAN must be an integer between 1 and 4094"};
   }
 
   if (data.gateway && !isValidIPv4(data.gateway) && !isValidIPv6(data.gateway)) {
-    return "Gateway must be a valid IPv4 or IPv6 address";
+    return {field: "gateway", message: "Gateway must be a valid IPv4 or IPv6 address"};
   }
 
   return null;
@@ -99,7 +107,23 @@ export function PrefixTreePage() {
   const [showDelete, setShowDelete] = useState(false);
   const [editItem, setEditItem] = useState<PrefixRecord | null>(null);
   const [saving, setSaving] = useState(false);
-  const [formData, setFormData] = useState<PrefixFormData>({cidr: "", rir: "APNIC", description: "", vlan: "", gateway: "", assignedTo: "", status: "Active"});
+  const [formData, setFormData] = useState<PrefixFormData>(BLANK_PREFIX_FORM);
+  const [createFieldError, setCreateFieldError] = useState<PrefixFieldError | null>(null);
+  const cidrInputRef = useRef<HTMLInputElement>(null);
+  const vlanInputRef = useRef<HTMLInputElement>(null);
+  const gatewayInputRef = useRef<HTMLInputElement>(null);
+  const createFieldRefs = useMemo(() => ({
+    cidr: cidrInputRef,
+    gateway: gatewayInputRef,
+    vlan: vlanInputRef,
+  }), []);
+
+  // Focus lands after the commit that sets `aria-invalid` and `aria-describedby`,
+  // so assistive technology announces the field together with its error.
+  useEffect(() => {
+    if (!createFieldError) return;
+    createFieldRefs[createFieldError.field].current?.focus();
+  }, [createFieldError, createFieldRefs]);
   const [search, setSearch] = useState("");
   const prefixQuery = useMemo<PrefixQueryParams>(() => {
     const normalizedSearch = search.trim();
@@ -111,12 +135,35 @@ export function PrefixTreePage() {
     50,
   );
 
+  const openCreateDialog = useCallback(() => {
+    setFormData(BLANK_PREFIX_FORM);
+    setCreateFieldError(null);
+    setShowCreate(true);
+  }, []);
+
+  const closeCreateDialog = useCallback(() => {
+    setCreateFieldError(null);
+    setShowCreate(false);
+  }, []);
+
+  /** Writes one create-form field and retires the inline error that field owns. */
+  const updateCreateField = useCallback((field: keyof PrefixFormData, value: string) => {
+    setFormData((previous) => ({...previous, [field]: value}));
+    setCreateFieldError((previous) => previous?.field === field ? null : previous);
+  }, []);
+
   const handleCreate = useCallback(async () => {
     const validationError = validatePrefixForm(formData);
     if (validationError) {
-      toast.danger(validationError);
+      // The inline error is the feedback: it is durable, sits beside the field,
+      // and is programmatically associated with it. A toast would add nothing
+      // and, being bottom-anchored, would sit on top of this dialog's own
+      // action row on a 390px-tall viewport.
+      setCreateFieldError(validationError);
       return;
     }
+
+    setCreateFieldError(null);
 
     setSaving(true);
     try {
@@ -131,11 +178,11 @@ export function PrefixTreePage() {
         status: formData.status,
       });
       toast.success(t.common.create);
-      setShowCreate(false);
+      closeCreateDialog();
       refetch();
     } catch (err: unknown) { toast.danger(errorMessage(err)); }
     finally { setSaving(false); }
-  }, [formData, refetch, t]);
+  }, [closeCreateDialog, formData, refetch, t]);
 
   const handleEdit = useCallback((prefix: PrefixRecord) => { setEditItem({...prefix}); setShowEdit(true); }, []);
 
@@ -243,20 +290,22 @@ export function PrefixTreePage() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 pb-10 pt-4">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-1">
           <h1 className="text-foreground text-2xl font-semibold">{t.nav.prefixes}</h1>
           <p className="text-muted text-sm">{t.prefixes.subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <SearchField aria-label={t.common.search} className="w-56" name="prefix-search" value={search} variant="secondary" onChange={setSearch}>
+        {/* Stacked under sm so the search field and the primary CTA each get the
+            full row instead of being pushed past a narrow viewport edge. */}
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <SearchField aria-label={t.common.search} className="w-full sm:w-56" name="prefix-search" value={search} variant="secondary" onChange={setSearch}>
             <SearchField.Group>
               <SearchField.SearchIcon />
               <SearchField.Input placeholder={t.common.search} />
               <SearchField.ClearButton />
             </SearchField.Group>
           </SearchField>
-          <Button size="sm" onPress={() => { setFormData({cidr: "", rir: "APNIC", description: "", vlan: "", gateway: "", assignedTo: "", status: "Active"}); setShowCreate(true); }}>
+          <Button className="w-full justify-center sm:w-auto" size="sm" onPress={openCreateDialog}>
             <Plus className="size-4" />{t.prefixes.addRoot}
           </Button>
         </div>
@@ -274,7 +323,7 @@ export function PrefixTreePage() {
             <p className="text-foreground text-sm font-medium">{t.prefixes.emptyState}</p>
             <p className="text-muted mt-1 text-xs">{t.prefixes.emptyStateHint}</p>
           </div>
-          <Button size="sm" onPress={() => { setFormData({cidr: "", rir: "APNIC", description: "", vlan: "", gateway: "", assignedTo: "", status: "Active"}); setShowCreate(true); }}>
+          <Button size="sm" onPress={openCreateDialog}>
             <Plus className="size-4" />{t.prefixes.addRoot}
           </Button>
         </Card>
@@ -298,16 +347,28 @@ export function PrefixTreePage() {
       )}
 
       {/* Create Dialog */}
-      <Dialog isOpen={showCreate} onClose={() => setShowCreate(false)} title={t.prefixes.addRoot} footer={<>
-        <Button variant="ghost" onPress={() => setShowCreate(false)}>{t.common.cancel}</Button>
+      <Dialog isOpen={showCreate} onClose={closeCreateDialog} title={t.prefixes.addRoot} footer={<>
+        <Button variant="ghost" onPress={closeCreateDialog}>{t.common.cancel}</Button>
         <Button isDisabled={saving} onPress={handleCreate}>{t.common.create}</Button>
       </>}>
-        <TextField value={formData.cidr} onChange={(v) => setFormData(p => ({...p, cidr: v}))}><Label>{t.prefixes.cidr}</Label><Input placeholder="103.152.220.0/22" className="font-mono" /></TextField>
-        <TextField value={formData.rir} onChange={(v) => setFormData(p => ({...p, rir: v as PrefixRir | ""}))}><Label>{t.prefixes.rir}</Label><Input placeholder="APNIC" /></TextField>
-        <TextField value={formData.vlan} onChange={(v) => setFormData(p => ({...p, vlan: v}))}><Label>{t.prefixes.vlan}</Label><Input placeholder="100" type="number" /></TextField>
-        <TextField value={formData.gateway} onChange={(v) => setFormData(p => ({...p, gateway: v}))}><Label>{t.prefixes.gateway}</Label><Input placeholder="103.152.220.1" className="font-mono" /></TextField>
-        <TextField value={formData.assignedTo} onChange={(v) => setFormData(p => ({...p, assignedTo: v}))}><Label>{t.prefixes.assignedTo}</Label><Input placeholder="Web Cluster A" /></TextField>
-        <TextField value={formData.description} onChange={(v) => setFormData(p => ({...p, description: v}))}><Label>{t.common.description}</Label><Input /></TextField>
+        <TextField isInvalid={createFieldError?.field === "cidr"} value={formData.cidr} onChange={(v) => updateCreateField("cidr", v)}>
+          <Label>{t.prefixes.cidr}</Label>
+          <Input ref={cidrInputRef} placeholder="103.152.220.0/22" className="font-mono" />
+          <FieldError>{createFieldError?.field === "cidr" ? createFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField value={formData.rir} onChange={(v) => updateCreateField("rir", v as PrefixRir | "")}><Label>{t.prefixes.rir}</Label><Input placeholder="APNIC" /></TextField>
+        <TextField isInvalid={createFieldError?.field === "vlan"} value={formData.vlan} onChange={(v) => updateCreateField("vlan", v)}>
+          <Label>{t.prefixes.vlan}</Label>
+          <Input ref={vlanInputRef} placeholder="100" type="number" />
+          <FieldError>{createFieldError?.field === "vlan" ? createFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField isInvalid={createFieldError?.field === "gateway"} value={formData.gateway} onChange={(v) => updateCreateField("gateway", v)}>
+          <Label>{t.prefixes.gateway}</Label>
+          <Input ref={gatewayInputRef} placeholder="103.152.220.1" className="font-mono" />
+          <FieldError>{createFieldError?.field === "gateway" ? createFieldError.message : null}</FieldError>
+        </TextField>
+        <TextField value={formData.assignedTo} onChange={(v) => updateCreateField("assignedTo", v)}><Label>{t.prefixes.assignedTo}</Label><Input placeholder="Web Cluster A" /></TextField>
+        <TextField value={formData.description} onChange={(v) => updateCreateField("description", v)}><Label>{t.common.description}</Label><Input /></TextField>
       </Dialog>
 
       {/* Edit Dialog */}
