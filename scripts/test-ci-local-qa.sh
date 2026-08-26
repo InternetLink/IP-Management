@@ -5,6 +5,39 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly CI_LOCAL_SCRIPT="$SCRIPT_DIR/ci-local.sh"
 
+# Deterministic cleanup: every temp directory and QA state dir created below
+# is registered here as soon as it exists, so an EXIT trap tears it all down
+# on any exit path (success, `fail`, or an unexpected error under `set -e`),
+# not only when control reaches the end of the script.
+declare -a CLEANUP_STATE_DIRS=()
+declare -a CLEANUP_PLAIN_DIRS=()
+
+register_cleanup_state_dir() {
+  [[ -n "$1" ]] && CLEANUP_STATE_DIRS+=("$1")
+}
+
+register_cleanup_plain_dir() {
+  [[ -n "$1" ]] && CLEANUP_PLAIN_DIRS+=("$1")
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  local dir
+  for dir in "${CLEANUP_STATE_DIRS[@]:-}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    bash -c 'source "$1"; qa_cleanup_state_dir "$2"' _ "$CI_LOCAL_SCRIPT" "$dir" >/dev/null 2>&1 || true
+  done
+  for dir in "${CLEANUP_PLAIN_DIRS[@]:-}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    rm -rf -- "$dir"
+  done
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 fail() {
   printf 'CI_LOCAL_QA_TEST_FAILED code=%s\n' "$1" >&2
   exit 1
@@ -99,6 +132,7 @@ assert_status 0 bash "$CI_LOCAL_SCRIPT" --cleanup-qa "$cleanup_token" >/dev/null
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/ipam-ci-local-qa-test.XXXXXX")"
 chmod 700 "$test_root"
+register_cleanup_plain_dir "$test_root"
 pid_record="$test_root/process.pid"
 state_record="$test_root/state.path"
 
@@ -121,6 +155,7 @@ set -e
 [[ "$partial_status" -eq 19 ]] || fail 'partial-start-status'
 partial_pid="$(<"$pid_record")"
 partial_state="$(<"$state_record")"
+register_cleanup_state_dir "$partial_state"
 [[ ! -d "$partial_state" ]] || fail 'partial-state-remains'
 if kill -0 "$partial_pid" 2>/dev/null; then
   fail 'partial-process-remains'
@@ -194,6 +229,7 @@ bash -c '
 ' _ "$CI_LOCAL_SCRIPT" >/dev/null 2>&1
 
 environment_state="$(<"$environment_state_record")"
+register_cleanup_state_dir "$environment_state"
 backend_group="$(<"$environment_state/backend.pid")"
 frontend_group="$(<"$environment_state/frontend.pid")"
 backend_app_pid="$(<"$backend_app_pid_record")"
@@ -233,7 +269,11 @@ bash -c 'source "$1"; qa_cleanup_state_dir "$2"' _ "$CI_LOCAL_SCRIPT" "$environm
 
 install_probe_root="$(mktemp -d "${TMPDIR:-/tmp}/ipam-ci-local-qa-install.XXXXXX")"
 chmod 700 "$install_probe_root"
+register_cleanup_plain_dir "$install_probe_root"
 install_state_record="$install_probe_root/state.path"
+mkdir -m 700 "$install_probe_root/home"
+printf '//registry.npmjs.org/:_authToken=hostile-user-config-token\n' >"$install_probe_root/home/.npmrc"
+chmod 600 "$install_probe_root/home/.npmrc"
 mkdir -m 700 "$install_probe_root/bin"
 cat > "$install_probe_root/bin/npm" <<'FAKE_NPM'
 #!/usr/bin/env bash
@@ -287,9 +327,18 @@ bash -c '
       "$QA_BACKEND_RUNTIME_DIR::ci") capture_name=backend-npm-ci ;;
       "$QA_FRONTEND_RUNTIME_DIR::ci") capture_name=frontend-npm-ci ;;
       *"::run db:generate") capture_name=backend-db-generate ;;
-      *"::run build") capture_name=backend-build ;;
+      *"::run build")
+        capture_name=backend-build
+        rm -f "$QA_BACKEND_RUNTIME_DIR/dist/scripts/bootstrap-admin.js"
+        mkdir -p "$QA_BACKEND_RUNTIME_DIR/dist/src/scripts"
+        printf "compiled-bootstrap-sentinel\n" >"$QA_BACKEND_RUNTIME_DIR/dist/src/scripts/bootstrap-admin.js"
+        ;;
+      *"::prune --omit=dev") capture_name=backend-production-prune ;;
       *"::run db:deploy") capture_name=database-migrate ;;
-      *"::run auth:bootstrap") capture_name=operator-bootstrap ;;
+      *"::run auth:bootstrap")
+        capture_name=operator-bootstrap
+        [[ "${QA_BOOTSTRAP_ATTEMPT:-}" == idempotent ]] && capture_name=operator-bootstrap-idempotent
+        ;;
       *"::test --"*) capture_name=frontend-cookie-test ;;
       *) printf "unexpected-npm-invocation %s\n" "$PWD::$*" >&2; return 1 ;;
     esac
@@ -319,6 +368,7 @@ bash -c '
 ' _ "$CI_LOCAL_SCRIPT" >/dev/null 2>&1 || fail 'install-probe-execution'
 
 install_state="$(<"$install_state_record")"
+register_cleanup_state_dir "$install_state"
 
 generated_value() {
   local name="$1"
@@ -382,7 +432,14 @@ install_forbidden=(
 assert_capture_excludes backend-npm-ci "${install_forbidden[@]}"
 assert_capture_excludes backend-db-generate "${install_forbidden[@]}"
 assert_capture_excludes backend-build "${install_forbidden[@]}"
+assert_capture_excludes backend-production-prune "${install_forbidden[@]}"
 assert_capture_excludes frontend-cookie-test "${install_forbidden[@]}"
+
+assert_capture_value backend-npm-ci NPM_CONFIG_USERCONFIG "$install_state/backend-npmrc"
+assert_capture_value backend-npm-ci HOME "$install_state/backend-home"
+[[ ! -s "$install_state/backend-npmrc" ]] || fail 'backend-npmrc-not-empty'
+[[ "$(stat -c '%a' "$install_state/backend-npmrc")" == 600 ]] || fail 'backend-npmrc-mode'
+[[ ! -e "$install_state/backend-home/.npmrc" ]] || fail 'hostile-user-npmrc-visible'
 
 # The frontend install is the sole authenticated fetch, so it may see its HeroUI
 # token and nothing else.
@@ -402,6 +459,7 @@ assert_capture_value operator-bootstrap BOOTSTRAP_TOKEN "$generated_bootstrap_to
 assert_capture_value operator-bootstrap BOOTSTRAP_ADMIN_USERNAME "$generated_username"
 assert_capture_value operator-bootstrap BOOTSTRAP_ADMIN_PASSWORD "$generated_password"
 assert_capture_value operator-bootstrap BOOTSTRAP_DISABLED false
+[[ -r "$install_probe_root/operator-bootstrap-idempotent.env" ]] || fail 'missing-idempotent-bootstrap-capture'
 
 # The migrate step needs the database URL and nothing else.
 assert_capture_excludes database-migrate \
@@ -429,7 +487,5 @@ assert_status 0 bash -c '
 
 bash -c 'source "$1"; qa_cleanup_state_dir "$2"' _ "$CI_LOCAL_SCRIPT" "$install_state" >/dev/null 2>&1
 [[ ! -d "$install_state" ]] || fail 'install-state-remains'
-rm -rf -- "$install_probe_root"
 
-rm -rf -- "$test_root"
 printf 'CI_LOCAL_QA_SHELL_TESTS_OK\n'

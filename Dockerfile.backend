@@ -55,7 +55,7 @@ COPY --from=production-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node backend/package*.json ./
 COPY --chown=node:node backend/prisma ./prisma
-COPY --chown=node:node backend/scripts ./scripts
+COPY --chown=node:node backend/scripts/start-prod.sh backend/scripts/verify-migrations.sh ./scripts/
 
 USER node
 

@@ -62,7 +62,16 @@ jobs:
 
       - name: Build backend
         working-directory: backend
-        run: npm run build
+        run: |
+          set -euo pipefail
+          mkdir -p dist/scripts
+          printf 'stale-build-sentinel\n' >dist/scripts/bootstrap-admin.js
+          npm run build
+          [[ ! -e dist/scripts/bootstrap-admin.js ]]
+          [[ -s dist/src/scripts/bootstrap-admin.js ]]
+
+      - name: Verify production auth bootstrap
+        run: bash scripts/test-production-auth-bootstrap.sh
 
       - name: Install public frontend dependencies
         working-directory: frontend
@@ -106,6 +115,9 @@ jobs:
       - name: Run final artifact hash fixtures
         run: bash scripts/test-verify-final-artifact-hash.sh
 
+      - name: Run ci-local QA harness fixtures
+        run: bash scripts/test-ci-local-qa.sh
+
       - name: Check release shell scripts
         run: >-
           shellcheck -S warning
@@ -122,6 +134,9 @@ jobs:
           scripts/test-platform-config-renderer.sh
           scripts/test-verify-final-artifact-hash.sh
           scripts/test-verify-deployment-all.sh
+          scripts/test-production-auth-bootstrap.sh
+          scripts/test-production-auth-bootstrap-success.sh
+          scripts/test-ci-local-qa.sh
           scripts/fixtures/verify-deployment-all/docker
           scripts/fixtures/verify-deployment-all/curl
 
@@ -169,6 +184,10 @@ jobs:
         working-directory: backend
         run: npm run db:generate
 
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
       - name: Grant integration database privileges
         env:
           MYSQL_PWD: ipam-ci-root-password
@@ -190,6 +209,9 @@ jobs:
       - name: Run backend integration tests
         working-directory: backend
         run: npm run test:integration
+
+      - name: Verify production auth bootstrap succeeds and is idempotent
+        run: TEST_DATABASE_URL="$TEST_DATABASE_URL" bash scripts/test-production-auth-bootstrap-success.sh
 
   private-build:
     name: Private frontend build

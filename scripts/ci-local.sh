@@ -13,6 +13,7 @@ readonly IMAGE_MAP_SCRIPT="$ROOT_DIR/scripts/verify-image-map.sh"
 readonly DEPLOYMENT_SCRIPT="$ROOT_DIR/scripts/verify-deployment.sh"
 readonly PROTECTION_SCRIPT="$ROOT_DIR/scripts/verify-github-protection.sh"
 readonly PRIVATE_NPM_CI_SCRIPT="$ROOT_DIR/scripts/npm-ci-private.sh"
+readonly PRODUCTION_BOOTSTRAP_SCRIPT="$ROOT_DIR/scripts/test-production-auth-bootstrap.sh"
 readonly QA_STATE_ROOT="${TMPDIR:-/tmp}/ipam-ci-local-qa-${UID}"
 
 TEMP_DIR=""
@@ -126,11 +127,11 @@ run_gate() {
 }
 
 backend_npm_ci() {
-  (cd "$BACKEND_DIR" && npm ci)
+  (cd "$BACKEND_DIR" && qa_backend_offline_command ci)
 }
 
 backend_db_generate() {
-  (cd "$BACKEND_DIR" && npm run db:generate)
+  (cd "$BACKEND_DIR" && qa_backend_offline_command run db:generate)
 }
 
 backend_unit_tests() {
@@ -146,7 +147,18 @@ backend_typecheck() {
 }
 
 backend_build() {
-  (cd "$BACKEND_DIR" && npm run build)
+  local stale_artifact="$BACKEND_DIR/dist/scripts/bootstrap-admin.js"
+  local compiled_artifact="$BACKEND_DIR/dist/src/scripts/bootstrap-admin.js"
+
+  mkdir -p -- "$(dirname -- "$stale_artifact")"
+  printf 'stale-build-sentinel\n' >"$stale_artifact"
+  (cd "$BACKEND_DIR" && qa_backend_offline_command run build)
+  [[ ! -e "$stale_artifact" ]] || fail 'backend-stale-build-artifact'
+  [[ -s "$compiled_artifact" ]] || fail 'backend-compiled-bootstrap-artifact'
+}
+
+production_auth_bootstrap() {
+  bash "$PRODUCTION_BOOTSTRAP_SCRIPT"
 }
 
 frontend_npm_ci() {
@@ -525,6 +537,22 @@ qa_backend_database_command() {
 # so handing them the live QA database URL would expose it to every dependency
 # lifecycle script for no functional gain.
 qa_backend_offline_command() {
+  local npm_userconfig_root="${QA_STATE_DIR:-$TEMP_DIR}"
+  local npm_home="$npm_userconfig_root/backend-home"
+  local npm_userconfig="$npm_userconfig_root/backend-npmrc"
+
+  [[ -n "$npm_userconfig_root" && -d "$npm_userconfig_root" ]] || fail 'backend-offline-environment-root'
+  mkdir -p -- "$npm_home"
+  chmod 700 -- "$npm_home"
+  if [[ ! -e "$npm_userconfig" ]]; then
+    : >"$npm_userconfig"
+    chmod 600 -- "$npm_userconfig"
+  fi
+  [[ -f "$npm_userconfig" && ! -L "$npm_userconfig" ]] || fail 'backend-npm-userconfig'
+  unset DATABASE_URL TEST_DATABASE_URL HEROUI_AUTH_TOKEN
+  unset AUTH_SECRET BOOTSTRAP_TOKEN BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_EMAIL
+  unset NODE_AUTH_TOKEN NPM_TOKEN
+  export HOME="$npm_home" NPM_CONFIG_USERCONFIG="$npm_userconfig"
   npm "$@"
 }
 
@@ -543,7 +571,14 @@ qa_frontend_install() {
 }
 
 qa_backend_build_command() {
-  npm "$@"
+  local stale_artifact="$QA_BACKEND_RUNTIME_DIR/dist/scripts/bootstrap-admin.js"
+  local compiled_artifact="$QA_BACKEND_RUNTIME_DIR/dist/src/scripts/bootstrap-admin.js"
+
+  mkdir -p -- "$(dirname -- "$stale_artifact")"
+  printf 'stale-build-sentinel\n' >"$stale_artifact"
+  qa_backend_offline_command "$@"
+  [[ ! -e "$stale_artifact" ]] || fail 'qa-backend-stale-build-artifact'
+  [[ -s "$compiled_artifact" ]] || fail 'qa-backend-compiled-bootstrap-artifact'
 }
 
 qa_copy_backend_runtime() {
@@ -573,6 +608,10 @@ qa_install_and_build() {
   qa_run_logged backend-npm-ci "$QA_BACKEND_RUNTIME_DIR" qa_backend_offline_command ci
   qa_run_logged backend-db-generate "$QA_BACKEND_RUNTIME_DIR" qa_backend_offline_command run db:generate
   qa_run_logged backend-build "$QA_BACKEND_RUNTIME_DIR" qa_backend_build_command run build
+  qa_run_logged backend-production-prune "$QA_BACKEND_RUNTIME_DIR" qa_backend_offline_command prune --omit=dev
+  [[ ! -x "$QA_BACKEND_RUNTIME_DIR/node_modules/.bin/ts-node" ]] || fail 'qa-ts-node-present'
+  [[ -s "$QA_BACKEND_RUNTIME_DIR/dist/src/scripts/bootstrap-admin.js" ]] \
+    || fail 'qa-compiled-bootstrap-artifact'
   qa_run_logged frontend-runtime-copy "$ROOT_DIR" qa_copy_frontend_runtime
   REDACT_HEROUI_AUTH_TOKEN="$QA_HEROUI_AUTH_TOKEN" \
     qa_run_logged frontend-npm-ci "$QA_FRONTEND_RUNTIME_DIR" qa_frontend_install
@@ -590,7 +629,15 @@ qa_prepare_database() {
     REDACT_BOOTSTRAP_TOKEN="$QA_BOOTSTRAP_TOKEN" \
     REDACT_QA_USERNAME="$QA_USERNAME" \
     REDACT_QA_PASSWORD="$QA_PASSWORD" \
+    QA_BOOTSTRAP_ATTEMPT=initial \
     qa_run_logged operator-bootstrap "$QA_BACKEND_RUNTIME_DIR" qa_backend_bootstrap_command run auth:bootstrap
+  REDACT_DATABASE_URL="$QA_DATABASE_URL" \
+    REDACT_AUTH_SECRET="$QA_AUTH_SECRET" \
+    REDACT_BOOTSTRAP_TOKEN="$QA_BOOTSTRAP_TOKEN" \
+    REDACT_QA_USERNAME="$QA_USERNAME" \
+    REDACT_QA_PASSWORD="$QA_PASSWORD" \
+    QA_BOOTSTRAP_ATTEMPT=idempotent \
+    qa_run_logged operator-bootstrap-idempotent "$QA_BACKEND_RUNTIME_DIR" qa_backend_bootstrap_command run auth:bootstrap
   unset QA_BOOTSTRAP_TOKEN
 }
 
@@ -811,6 +858,7 @@ run_full_gate() {
   run_gate backend-integration-tests backend_integration_tests
   run_gate backend-typecheck backend_typecheck
   run_gate backend-build backend_build
+  run_gate production-auth-bootstrap production_auth_bootstrap
 
   run_gate frontend-npm-ci frontend_npm_ci
   run_gate frontend-tests frontend_tests
@@ -855,6 +903,7 @@ main() {
   [[ -f "$IMAGE_MAP_SCRIPT" ]] || fail 'missing-image-map-script'
   [[ -f "$DEPLOYMENT_SCRIPT" ]] || fail 'missing-deployment-script'
   [[ -f "$PROTECTION_SCRIPT" ]] || fail 'missing-protection-script'
+  [[ -f "$PRODUCTION_BOOTSTRAP_SCRIPT" ]] || fail 'missing-production-bootstrap-script'
 
   TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ipam-ci-local.XXXXXX")"
   case "$node_command" in

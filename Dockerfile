@@ -80,7 +80,7 @@ COPY --from=backend-production-deps --chown=node:node /app/backend/node_modules 
 COPY --from=backend-builder --chown=node:node /app/backend/dist ./backend/dist
 COPY --chown=node:node backend/package*.json ./backend/
 COPY --chown=node:node backend/prisma ./backend/prisma
-COPY --chown=node:node backend/scripts ./backend/scripts
+COPY --chown=node:node backend/scripts/start-prod.sh backend/scripts/verify-migrations.sh ./backend/scripts/
 COPY --from=frontend-builder --chown=node:node /app/frontend/.next/standalone ./frontend/
 COPY --from=frontend-builder --chown=node:node /app/frontend/.next/static ./frontend/.next/static
 COPY --chown=node:node scripts/start-combined.sh ./scripts/start-combined.sh

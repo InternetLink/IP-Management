@@ -103,13 +103,21 @@ APP_ORIGIN="http://localhost:3003"
 
 系统要求运维人员通过 CLI 完成第一个管理员账号的创建，浏览器端无法直接注册。
 
-1. 确保后端 `.env` 中配置了 `BOOTSTRAP_TOKEN`（至少 16 字符随机字符串）和 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD`。可选设置 `BOOTSTRAP_ADMIN_EMAIL`。
-2. 运行 bootstrap 命令：
+1. 确保后端 `.env`（或运行环境变量）中配置了 `BOOTSTRAP_TOKEN`（至少 16 字符随机字符串）和 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD`。可选设置 `BOOTSTRAP_ADMIN_EMAIL`。
+2. 在已部署的运行环境中直接执行编译后的命令，**不要**执行 `npm run build`——生产镜像不包含 `nest` CLI，构建产物已在镜像构建阶段生成好，源码也不在镜像内。
 
-```bash
-cd backend
-npm run auth:bootstrap
-```
+   Railway（combined 镜像，容器工作目录为 `/app`，后端在子目录 `backend/` 下）：
+
+   ```bash
+   cd backend
+   npm run auth:bootstrap
+   ```
+
+   独立 backend 镜像（例如 Zeabur 拆分部署，容器工作目录本身就是后端根目录）：
+
+   ```bash
+   npm run auth:bootstrap
+   ```
 
 3. 命令成功后打印 `Bootstrap completed.`。如果已经创建过管理员，会打印 `Bootstrap already completed; no action taken.` 并正常退出。
 4. 创建成功后建议设置 `BOOTSTRAP_DISABLED=true` 永久禁用该入口。
@@ -140,6 +148,7 @@ npm install
 npm run db:generate
 npm run db:deploy
 npm run db:seed          # 可选：填充示例数据
+npm run build
 npm run auth:bootstrap   # 首次部署：创建管理员
 npm run dev
 ```
@@ -364,6 +373,9 @@ bash scripts/verify-github-protection.sh # GitHub 分支保护证据（需 gh au
 
 # 本地完整 CI
 bash scripts/ci-local.sh                 # 需要 TEST_DATABASE_URL + HEROUI_AUTH_TOKEN
+
+# 受保护 QA：隔离 MySQL 数据库、生产依赖和编译 CLI bootstrap（含幂等重试）
+TEST_DATABASE_URL="..." HEROUI_AUTH_TOKEN="..." bash scripts/ci-local.sh --serve-qa
 ```
 
 由受保护 CI 提供的外部证据：
