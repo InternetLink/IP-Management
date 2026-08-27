@@ -269,13 +269,13 @@ assert_runtime_contents() {
   # Prisma's production dependency tree includes TypeScript; source/config and Nest CLI are the runtime boundary.
   case "$name" in
     ipam-backend)
-      check='test -d /app/dist && test -x /app/node_modules/.bin/prisma && test ! -d /app/src && test ! -e /app/tsconfig.json && test ! -x /app/node_modules/.bin/nest'
+      check='test -f /app/dist/src/scripts/bootstrap-admin.js && test -x /app/node_modules/.bin/prisma && test ! -d /app/src && test ! -e /app/tsconfig.json && test ! -x /app/node_modules/.bin/nest'
       ;;
     ipam-frontend)
       check='test -f /app/server.js && test -d /app/.next/static && test ! -d /app/src && test ! -e /app/tsconfig.json && test ! -x /app/node_modules/.bin/tsc'
       ;;
     ipam-combined)
-      check='test -d /app/backend/dist && test -x /app/backend/node_modules/.bin/prisma && test -f /app/frontend/server.js && test -f /app/scripts/start-combined.sh && test ! -d /app/backend/src && test ! -d /app/frontend/src && test ! -e /app/backend/tsconfig.json && test ! -x /app/backend/node_modules/.bin/nest'
+      check='test -f /app/backend/dist/src/scripts/bootstrap-admin.js && test -x /app/backend/node_modules/.bin/prisma && test -f /app/frontend/server.js && test -f /app/scripts/start-combined.sh && test ! -d /app/backend/src && test ! -d /app/frontend/src && test ! -e /app/backend/tsconfig.json && test ! -x /app/backend/node_modules/.bin/nest'
       ;;
     *)
       fail "unknown-image-$name"

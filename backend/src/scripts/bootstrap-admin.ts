@@ -1,11 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 
-import { AppModule } from '../src/app.module';
-import type { BootstrapAdminDto } from '../src/auth/auth.dto';
+import { AppModule } from '../app.module';
+import type { BootstrapAdminDto } from '../auth/auth.dto';
 import {
   AuthService,
   BootstrapAlreadyCompletedException,
-} from '../src/auth/auth.service';
+} from '../auth/auth.service';
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];

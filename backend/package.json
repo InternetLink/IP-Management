@@ -18,7 +18,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
     "capacity:backfill": "ts-node scripts/capacity-backfill.ts",
-    "auth:bootstrap": "ts-node scripts/bootstrap-admin.ts"
+    "auth:bootstrap": "node dist/src/scripts/bootstrap-admin.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
